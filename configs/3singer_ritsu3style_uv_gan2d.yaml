@@ -54,7 +54,10 @@ train:
   eval_items: 5           # one per (speaker × style) unit
   vocoder: checkpoints/nhv_v3.onnx
   num_workers: 4
-  pitch_aug: false
+  pitch_aug: false                    # true = formant-preserving pitch augmentation (needs recipe save_wav: true)
+  pitch_aug_semitones: [-3.0, 3.0]    # random semitone range when augmenting (wider is OK: formants are preserved)
+  pitch_aug_prob: 0.5                 # fraction of items to augment (the rest stay the real target = fidelity anchor)
+  pitch_aug_formant_preserve: true    # keep the original formants via cepstral envelope correction (~PSOLA)
   balance_by: db          # sample each (speaker × style) unit equally
 gan:
   enabled: true

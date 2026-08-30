@@ -33,8 +33,11 @@ from dataset import (LeapSingerDataset, acoustic_collate_fn, FrameBasedBatchSamp
 from infer import infer_mel, load_vocoder, mel_to_wav
 from leapsinger.modules.discriminators import (
     JCUMelDiscriminator, Mel2DDiscriminator, d_loss_jcu, g_adv_fm_jcu, laplacian_var_ratio)
-from preprocess.vocab import Vocab
+from preprocess.vocab import Vocab, PAU_ID
+from preprocess.phrase_cut import clip_pau_gain
 from leapsinger.models.acoustic import HarmonicAcousticModel, HarmonicAcousticModelMultiSpk
+from leapsinger.mel import pitch_warp_mel_torch
+from leapsinger.modules.harmonic_excitation import harmonic_wave
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -163,6 +166,64 @@ def _adaptive_adv_weight(recon_ref, gan_term, last_w, cap: float):
     return (g_r / (g_a + 1e-8)).clamp(max=cap).detach()
 
 
+_MEL_FLOOR = float(np.log(1e-5))     # dataset._MEL_FLOOR と一致(preprocess mel の clamp 下限)
+
+
+def maybe_pitch_augment(b, tr, mel_cfg, model, *, silence, fade_frames):
+    """pitch_aug: 拡張する item だけ per-item 半音 st でピッチシフト。target_mel(周波数ワープ)・
+    f0_logf0(+st/12)・harm_wave(シフト後 f0 から再生成)を同じ連続 r=2^(st/12) で一致更新。周波数軸
+    のみワープ=T 不変ゆえ ph_durs/uv/frame_mask は不変。未拡張 item(st=0)はキャッシュ済み harm_wave を
+    流用(=高速化)。mel と f0 が同一 st ゆえ f0↔音は構造的に一致(NHVSing の量子化ズレなし)。fp32・
+    no_grad。b を in-place 更新して返す。b['wav'] 無し(recipe save_wav 未実施)なら素通し=現行と同一。"""
+    if (not tr.get("pitch_aug", False)) or b.get("wav") is None:
+        return b
+    lo, hi = tr.get("pitch_aug_semitones", [-3.0, 3.0])
+    prob   = float(tr.get("pitch_aug_prob", 0.5))
+    fp     = bool(tr.get("pitch_aug_formant_preserve", True))
+    dev = b["target_mel"].device
+    B, _, T = b["target_mel"].shape
+    st = torch.empty(B, device=dev).uniform_(float(lo), float(hi))
+    st = st * (torch.rand(B, device=dev) < prob).to(st.dtype)          # prob 未満の item は st=0(素通し)
+    idx = torch.nonzero(st != 0, as_tuple=False).flatten()
+    if idx.numel() == 0:
+        return b
+    with torch.no_grad():
+        # 1) 周波数軸ワープした mel(フォルマント保存可)。T 不変。
+        new_mel = pitch_warp_mel_torch(
+            b["wav"][idx].float(), st[idx], sr=mel_cfg["sr"], n_fft=mel_cfg["n_fft"], hop=mel_cfg["hop"],
+            win=mel_cfg["win"], n_mels=mel_cfg["n_mels"], fmin=mel_cfg["fmin"], fmax=mel_cfg["fmax"],
+            formant_preserve=fp)                                        # [k, M, T']
+        if new_mel.shape[2] != T:                                     # wav パディング由来の T ずれを整合
+            new_mel = (new_mel[:, :, :T] if new_mel.shape[2] > T
+                       else torch.nn.functional.pad(new_mel, (0, T - new_mel.shape[2]), value=_MEL_FLOOR))
+        # 2) 無音フェード再適用(生 wav 由来=フェード無し → 未拡張 item と整合。dataset.__getitem__ をミラー)
+        if silence and fade_frames > 0:
+            phi = b["ph_ids"][idx].cpu().numpy(); dur = b["ph_durs"][idx].cpu().numpy()
+            Tv  = (~b["frame_mask"][idx]).sum(1).cpu().numpy()
+            for j in range(idx.numel()):
+                Ti = int(Tv[j]); fb = np.concatenate([[0], np.cumsum(dur[j])]).clip(max=Ti)
+                sil = np.zeros(Ti, dtype=bool)
+                for p in range(len(phi[j])):
+                    if phi[j][p] == PAU_ID:
+                        sil[fb[p]:fb[p + 1]] = True
+                if sil.any():
+                    logg = torch.as_tensor(np.log(np.clip(clip_pau_gain(sil, fade_frames), 1e-12, 1.0)),
+                                           device=dev, dtype=new_mel.dtype)
+                    new_mel[j, :, :Ti] = torch.clamp_min(new_mel[j, :, :Ti] + logg[None, :], _MEL_FLOOR)
+        b["target_mel"][idx] = new_mel.to(b["target_mel"].dtype)
+        # 3) f0 を同じ r でシフト(全 item・st=0 は +0)。encoder cond と励起の両方に効く。
+        b["f0_logf0"] = b["f0_logf0"] + (st / 12.0)[:, None]
+        # 4) harm_wave 再生成(拡張 item のみ・シフト後 f0 から。未拡張はキャッシュ流用=高速化の要)
+        if "harm_wave" in b:
+            f0l  = b["f0_logf0"][idx]                                  # [k, T](シフト済)
+            uvsh = torch.ones_like(f0l) if not model.use_uv else b["uv"][idx]
+            harm = harmonic_wave(f0l, uvsh, n_harm=model.n_harm, hop=model.exc_hop,
+                                 harm_decay=model.harm_decay)          # [k, T*hop]
+            N = min(harm.shape[1], b["harm_wave"].shape[1])
+            b["harm_wave"][idx, :N] = harm[:, :N].to(b["harm_wave"].dtype)
+    return b
+
+
 def _rand_window(tensors, win: int):
     """時間軸で長さ win の同一ランダム窓を切る（全サンプル共有）。win<=0 or T<=win なら無変更。
     tensors: [B, C, T] のリスト。GAN-TTS 流に「全体を見せない」ための短窓。"""
@@ -226,9 +287,10 @@ def main():
     print(f"model {arch}  {sum(p.numel() for p in model.parameters())/1e6:.2f}M params  "
           f"n_speakers={cfg['model']['n_speakers']}")
 
-    if not tr.get("pitch_aug", False):
-        train_ds.warm_harm_cache(n_harm=model.n_harm, harm_decay=model.harm_decay,
-                                 exc_hop=model.exc_hop, use_uv=model.use_uv, device=device)
+    # pitch_aug でも harm キャッシュを warm する。未拡張 item はキャッシュ流用、拡張 item のみ
+    # maybe_pitch_augment がシフト後 f0 で再生成して上書き(部分キャッシュ=高速化)。
+    train_ds.warm_harm_cache(n_harm=model.n_harm, harm_decay=model.harm_decay,
+                             exc_hop=model.exc_hop, use_uv=model.use_uv, device=device)
 
     _balance_by = tr.get("balance_by") or ("speaker" if tr.get("balance_speakers", False) else None)
     _weights = None
@@ -392,6 +454,8 @@ def main():
     while step < max_updates:
         for b in loader:
             b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in b.items()}
+            b = maybe_pitch_augment(b, tr, cfg["mel"], model,
+                                    silence=train_ds.silence, fade_frames=train_ds.silence_fade_frames)
             losses = _forward_flow_gan(model, b, tr.get("flow_loss", cfg["model"].get("flow_loss", "l2")))
             g_total = losses["flow"]
             d_loss = None; d_logits = {}; g_adv = g_fm = None; fm_w = 0.0; w_ad = 1.0
