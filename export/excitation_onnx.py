@@ -17,9 +17,12 @@ Why a separate module: the training excitation uses three ops that do not export
                                    opset-18 symbolic), so the STFT is a pure Gemm — exportable at
                                    any opset, runs in every ORT build, and fp16-converts cleanly.
 
-Numerics: the phase integral is a float32 cumsum, byte-for-byte the same op as the training
-`harmonic_noise_mel_torch` — the model was trained on float32 phase, so matching it (not a
-"more accurate" float64 accumulation) is what keeps the exported excitation on-distribution.
+Numerics: the phase integral is accumulated in FLOAT64, then cast back to float32. With a
+float32 cumsum, torch and ONNX Runtime drift apart at the ~1e3-1e4 rad a full phrase reaches
+(different summation order), and sin(k*phase) amplifies that drift into a torch-vs-ORT mel
+MAE of ~0.15+ that grows with length; float64 pins the two together (~0.03). The training
+excitation accumulates in float32, but the resulting x0 differs by only ~0.005 mel and is
+merely the flow's starting point — details at the inline note on the cumsum below.
 
 Noise: white noise is drawn inside the graph via `randn_like` (exports at opset 18), so the
 exported graph needs NO `z` input — matching the [tokens, durations, f0] contract.
