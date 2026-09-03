@@ -2,12 +2,12 @@
 
 Rebuilds the acoustic model straight from a checkpoint's config (no app framework), runs
 the harmonic flow, then renders the mel with the bundled NHVSing vocoder ONNX
-(checkpoints/nhv_v3.onnx) via onnxruntime — self-contained, no external dependency.
+(checkpoints/nhv_v3_1.onnx) via onnxruntime — self-contained, no external dependency.
 
     from infer import load_acoustic, infer_mel, load_vocoder, mel_to_wav
     model, cfg = load_acoustic("ckpt.pt")
     mel = infer_mel(model, item, num_steps=cfg["infer_steps"])
-    voc = load_vocoder("checkpoints/nhv_v3.onnx")
+    voc = load_vocoder("checkpoints/nhv_v3_1.onnx")
     wav = mel_to_wav(voc, mel, item["f0_logf0"], item["uv"])
 """
 from __future__ import annotations
@@ -175,7 +175,7 @@ class _OnnxVocoder:
 def load_vocoder(onnx_path: str, sr: int = 44100):
     """Load the bundled NHVSing vocoder ONNX (mel -> waveform) via onnxruntime. Self-contained: no
     external NHVSing checkout. ONNX I/O: mel[B,T,128], f0[B,1,T] (Hz), uv[B,1,T] (1 = unvoiced)
-    -> waveform[B,1,256*T] (44.1 kHz, hop 256). `onnx_path` = the bundled checkpoints/nhv_v3.onnx."""
+    -> waveform[B,1,256*T] (44.1 kHz, hop 256). `onnx_path` = the bundled checkpoints/nhv_v3_1.onnx."""
     import onnxruntime as ort
     sess = ort.InferenceSession(os.path.abspath(os.path.expanduser(onnx_path)),
                                 providers=["CPUExecutionProvider"])

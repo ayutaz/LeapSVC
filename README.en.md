@@ -158,8 +158,10 @@ For OpenUTAU, it exports a full voicebank (ONNX + config + dictionary + speaker 
 
 Two NHVSing vocoders are bundled under `checkpoints/`.
 
-- `nhv_v3.onnx` — takes a hop-size-256 mel and F0.
-- `nhv_v3x.onnx` — takes a hop-size-512 mel and F0.
+- `nhv_v3_1.onnx` — takes a hop-size-256 mel and F0.
+- `nhv_v3_1x.onnx` — takes a hop-size-512 mel and F0.
+
+The bundled version is **V3.1** — the latest weights, fixing the harmonic smearing on long inputs and the faint high-frequency stripes (see [NHVSing](https://github.com/wavtechyukky/NHVSing/) for details).
 
 ## Options
 
@@ -176,7 +178,7 @@ Two NHVSing vocoders are bundled under `checkpoints/`.
 
 ## License
 
-The code is MIT (`LICENSE`). However, the bundled vocoder ONNX files (`checkpoints/nhv_v3*.onnx`), the trained models distributed via Releases, and the singing databases used to train them are **not** covered by MIT — they follow their own licenses and terms of use (see the Acknowledgments below and `CREDITS.txt` in the model release).
+The code is MIT (`LICENSE`). However, the bundled vocoder ONNX files (`checkpoints/nhv_v3_1*.onnx`), the trained models distributed via Releases, and the singing databases used to train them are **not** covered by MIT — they follow their own licenses and terms of use (see the Acknowledgments below and `CREDITS.txt` in the model release).
 
 ## Acknowledgments
 

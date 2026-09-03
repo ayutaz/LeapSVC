@@ -158,8 +158,10 @@ OpenUTAU向けには、ボイスバンク一式（ONNX ＋ 設定 ＋ 辞書 ＋
 
 `checkpoints/` に NHVSing ボコーダーを2つ同梱しています。
 
-- `nhv_v3.onnx` — hop size256のmelとF0を受け取ります。
-- `nhv_v3x.onnx` — hop size512のmelとF0を受け取ります。
+- `nhv_v3_1.onnx` — hop size256のmelとF0を受け取ります。
+- `nhv_v3_1x.onnx` — hop size512のmelとF0を受け取ります。
+
+同梱しているのは **V3.1** です（長尺入力での倍音の滲みと、高域のかすかな縞を修正した最新の重み。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
 
 ## オプション
 
@@ -176,7 +178,7 @@ OpenUTAU向けには、ボイスバンク一式（ONNX ＋ 設定 ＋ 辞書 ＋
 
 ## ライセンス
 
-コードは MIT です（`LICENSE`）。ただし、同梱のボコーダー ONNX（`checkpoints/nhv_v3*.onnx`）、および Release で配布する学習済みモデルとその学習に使った歌声データベースは MIT の対象外で、それぞれのライセンス・規約に従います（下の謝辞、およびモデル配布物の `CREDITS.txt` を参照）。
+コードは MIT です（`LICENSE`）。ただし、同梱のボコーダー ONNX（`checkpoints/nhv_v3_1*.onnx`）、および Release で配布する学習済みモデルとその学習に使った歌声データベースは MIT の対象外で、それぞれのライセンス・規約に従います（下の謝辞、およびモデル配布物の `CREDITS.txt` を参照）。
 
 ## 謝辞
 
