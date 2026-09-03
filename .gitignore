@@ -37,8 +37,8 @@ data/
 *.ckpt
 *.pth
 *.onnx
-!checkpoints/nhv_v3.onnx
-!checkpoints/nhv_v3x.onnx
+!checkpoints/nhv_v3_1.onnx
+!checkpoints/nhv_v3_1x.onnx
 
 # ── Distributable OpenUTAU voicebanks (GitHub Releases Assets, not tracked)
 checkpoints/leapsinger_oni_nat_ritsu/
