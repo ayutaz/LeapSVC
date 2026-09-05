@@ -5,7 +5,7 @@ wav_to_mel と同一の recipe に統一するための共有関数。
 = center=False + 事前 reflect pad (n_fft-hop)//2, hann, mel_basis @ |stft|, ln(clamp 1e-5)。
 これで音響モデルの出力 mel が同梱ボコーダに in-distribution になる(resynth 実証済)。
 
-DiffSinger/OpenUtau 標準値: 44100 / n_fft2048 / win2048 / hop512 / 128mel / fmin40 / fmax16000 / ln。
+DiffSinger 標準値: 44100 / n_fft2048 / win2048 / hop512 / 128mel / fmin40 / fmax16000 / ln。
 """
 import numpy as np
 import librosa

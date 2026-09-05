@@ -8,8 +8,6 @@ LeapSinger is a diffusion-style **acoustic model** for singing voice. It runs ve
 
 **▶ Listen to the demo: https://wavtechyukky.github.io/LeapSinger/demo/**
 
-This repository is meant to be cloned and run directly. It is not published on PyPI.
-
 ## What is LeapSinger?
 
 Most diffusion models start from random noise and paint the mel little by little over many steps. LeapSinger instead starts from a **"pseudo-mel" built from F0** (an impulse waveform plus white noise), and finishes the mel in **a single step** with a rectified flow. It skips the slow work of learning how to draw clean periodic content, and jumps straight to a high-quality mel — hence the name *LeapSinger*.
@@ -29,7 +27,6 @@ Other features:
 
 - **Multi-speaker** — switch voices by speaker ID. As an example, we distribute a model with three Japanese singers (Oniku Kurumi / Natsume Yuuri / Namine Ritsu).
 - **Style control** — switch singing styles within the same speaker.
-- **OpenUTAU export (experimental)** — we provide an export in an OpenUTAU-compatible format. (Sorry — we have not actually verified that it works.)
 
 ## Demo
 
@@ -133,26 +130,23 @@ Running the same command again automatically resumes from where it stopped.
     python -m export.cli \
       --ckpt log/<run>/ckpt_050000.pt \
       --out export/<name> --model-name <name> \
-      --variant diffsinger --hop 512 --speaker embed
+      --variant diffsinger --hop 256 --speaker bake --spk-id 0
 
-For speaker handling (bake / embed / none) and other details, see "Export to ONNX / OpenUTAU" below.
+For speaker handling (bake / embed / none) and other details, see "Export to ONNX" below.
 
 You can try the whole flow — from export to use — in a notebook. Download the model from the Release and place it in `notebooks/sample_data/` (see `place_model_here.txt` in that folder).
 
     notebooks/export_and_use_onnx.ipynb
 
-- **Part 1** — a normal ONNX export, running the model on its own (phonemes + duration + F0 → mel → audio).
-- **Part 2** — export an OpenUTAU voicebank and explain how it differs from the standalone version.
+The notebook exports the acoustic model to a single ONNX and runs it end to end (phonemes + duration + F0 → mel → audio).
 
-### Export to ONNX / OpenUTAU (experimental)
+### Export to ONNX
 
 `export/` converts a checkpoint into a self-contained ONNX graph. The excitation and the single-step flow are baked into the graph, so the caller only needs to pass phonemes, durations, and F0. For speaker handling, you can choose:
 
 - **bake** — fix a single voice. This makes the simplest graph (no speaker input).
 - **embed** — take a speaker vector as input. One graph can switch to any voice.
 - **none** — for single-speaker models. No speaker input and no baking (a graph with no notion of speaker). For multi-speaker models, use bake or embed.
-
-For OpenUTAU, it exports a full voicebank (ONNX + config + dictionary + speaker embeddings).
 
 ### Vocoder
 
@@ -174,7 +168,6 @@ The bundled version is **V3.1** — the latest weights, fixing the harmonic smea
 
 - **Multilingual support** — so far we validate with Japanese data, but the design itself is language-independent. We plan to support other languages with their own phoneme dictionaries and data, aiming for a single model that can handle multiple languages.
 - **Higher quality** — we think there is still room to improve speaker fidelity, for example by refining how the pseudo-mel is generated and tuning its parameters.
-- **Verifying OpenUTAU on real hardware** — the OpenUTAU export is provided, but we have not verified it on an actual OpenUTAU install. We plan to test it for real.
 
 ## License
 

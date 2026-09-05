@@ -21,6 +21,8 @@ matters for the deliverable.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import onnx
 from onnx import TensorProto, helper, numpy_helper
@@ -292,35 +294,18 @@ def to_native_dft(path_in: str, path_out: str, *, n_fft: int = 2048) -> str:
     return path_out
 
 
-def add_speedup_input(path_in: str, path_out: str, *, name: str = "speedup") -> str:
-    """Declare an OpenUTAU-required `speedup` (int64 [1]) graph input, unused by the graph.
-
-    OpenUTAU's DiffSinger acoustic renderer ALWAYS feeds a `speedup` (a diffusion-sampler stride)
-    to the acoustic model; without a matching graph input, `session.Run` throws 'Required input
-    speedup is missing'. Our model is a rectified flow with a fixed, baked-in Euler step count, so
-    speedup is meaningless here — we accept it and ignore it (the flow always runs its fixed steps;
-    OpenUTAU's step/speedup slider has no effect on this model). ORT accepts an unused graph input
-    and simply requires it to be fed, which is exactly OpenUTAU's behaviour. Run this LAST (after
-    simplify/native-dft/fp16), so nothing prunes the unused input."""
-    model = onnx.load(path_in)
-    g = model.graph
-    if any(i.name == name for i in g.input):
-        onnx.save(model, path_out); return path_out
-    g.input.append(helper.make_tensor_value_info(name, TensorProto.INT64, [1]))
-    onnx.save(model, path_out)
-    return path_out
-
-
 def finalize(path_fp32: str, path_out: str, *, fp16: bool = True, do_simplify: bool = True,
-             native_dft: bool = False, add_speedup: bool = False) -> str:
-    """simplify -> native DFT -> fp16 -> add speedup input (each optional) -> path_out."""
+             native_dft: bool = False) -> str:
+    """simplify -> native DFT -> fp16 (each optional) -> a single path_out."""
     src = simplify(path_fp32) if do_simplify else path_fp32
+    ndft_tmp = None
     if native_dft:
-        src = to_native_dft(src, path_out + ".ndft.onnx")
+        ndft_tmp = path_out + ".ndft.onnx"
+        src = to_native_dft(src, ndft_tmp)
     if fp16:
-        src = to_fp16(src, path_out + ".fp16.onnx" if add_speedup else path_out)
-    if add_speedup:
-        return add_speedup_input(src, path_out)
+        src = to_fp16(src, path_out)
     if src != path_out:
         onnx.save(onnx.load(src), path_out)
+    if ndft_tmp and ndft_tmp != path_out and os.path.exists(ndft_tmp):
+        os.remove(ndft_tmp)                                   # drop the native-DFT intermediate
     return path_out

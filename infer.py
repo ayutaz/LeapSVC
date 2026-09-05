@@ -82,14 +82,13 @@ def infer_mel(model, item: dict, num_steps: int = 10, device: str = "cpu", seed:
 @torch.no_grad()
 def infer_mel_uvfree(model, tokens, durations, f0_hz, *, num_steps: int = 10,
                          spk_embed=None, device: str = "cpu", seed: int = 0):
-    """DiffSinger-contract adapter: drive a **uv-free** model with ONLY the inputs OpenUTAU's
-    DiffSinger acoustic runtime provides — `tokens`, `durations`, and a continuous (gap-less)
-    `f0_hz` — and return mel [n_mels, T]. No uv, no variance (uv is the ignored arg for a
-    use_uv=False model). This is the PyTorch analog of the eventual ONNX wrapper.
+    """uv-free inference helper: drive a **uv-free** model with ONLY `tokens`, `durations`, and a
+    continuous (gap-less) `f0_hz` — and return mel [n_mels, T]. No uv, no variance (uv is the
+    ignored arg for a use_uv=False model). This is the PyTorch analog of the ONNX export wrapper.
 
         tokens     [Np] int   phoneme ids
         durations  [Np] int   per-phoneme FRAME counts (sum = T)
-        f0_hz      [T]  float  interpolated (never-zero) F0 in Hz — DiffSinger's pitch curve
+        f0_hz      [T]  float  interpolated (never-zero) F0 in Hz — the continuous pitch curve
         spk_embed  optional [H] speaker embedding vector (host-mixed); added to the condition
                    for a multi-speaker model in place of the discrete spk_bank lookup.
     """
@@ -105,7 +104,7 @@ def infer_mel_uvfree(model, tokens, durations, f0_hz, *, num_steps: int = 10,
     uv = torch.ones(1, T, device=dev)                       # ignored (use_uv=False); kept for the signature
     kw = dict(phoneme_ids=tok, ph_durations=dur, f0_logf0=f0_logf0, uv=uv,
               n_frames=T, num_steps=num_steps, algorithm="euler")
-    if spk_embed is not None:                               # host-mixed speaker vector (OpenUTAU spk_embed)
+    if spk_embed is not None:                               # host-provided speaker vector
         v = torch.as_tensor(np.asarray(spk_embed), dtype=torch.float32, device=dev).view(-1)
         kw["spk_id"] = None
         cond_add = v[None, :, None]                         # [1,H,1] broadcast over T — matches _spk_add

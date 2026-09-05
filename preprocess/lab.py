@@ -5,7 +5,7 @@ Output: per-phrase `.npz` files with phoneme ids, durations, F0 (RMVPE), voiced 
 mel-spectrogram — everything the acoustic model (and the separately-published F0 / duration
 models) trains on. Phoneme timing comes straight from the lab; there is no musical score.
 
-Frame / mel settings come from a `MelSpec` (default hop = 256, OpenUTAU DiffSinger otherwise)
+Frame / mel settings come from a `MelSpec` (default hop = 256, DiffSinger otherwise)
 so the frame size is fully configurable. F0 uses RMVPE only. The mel and F0 keep the **raw**
 audio here (breath included) — whether to silence pau/breath is an opinion that belongs to the
 data loader (`LeapSingerDataset(silence=...)`), not the data.

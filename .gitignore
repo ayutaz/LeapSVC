@@ -40,7 +40,7 @@ data/
 !checkpoints/nhv_v3_1.onnx
 !checkpoints/nhv_v3_1x.onnx
 
-# ── Distributable OpenUTAU voicebanks (GitHub Releases Assets, not tracked)
+# ── Distributable voicebanks / release assets (GitHub Releases Assets, not tracked)
 checkpoints/leapsinger_oni_nat_ritsu/
 *.zip
 

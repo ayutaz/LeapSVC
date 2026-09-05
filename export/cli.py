@@ -6,18 +6,17 @@
 
 Variants (chosen to match the trained ckpt; the only weight-level split is use_uv):
     diffsinger (A): use_uv=False, n_styles=0. Inputs [tokens, durations, f0 (+spk_embed)].
-                    --hop 512 = pseudo-512 (×2 upsample in / pairwise-average out, OpenUTAU grid) | 256 = native.
+                    --hop 512 = pseudo-512 (×2 upsample in / pairwise-average out) | 256 = native.
     full       (B): use_uv=True (and/or styles). Inputs [tokens, durations, f0, uv (+spk_embed)].
                     Native hop. A style-bearing model runs at its base style (ONNX style input not wired).
 
-Speaker: none (single-spk) | embed (spk_embed graph input, .emb per speaker) | bake (freeze one
+Speaker: none (single-spk) | embed (spk_embed graph input the host feeds) | bake (freeze one
 speaker into the graph; acoustic file becomes {model}.{spk}.onnx).
 
 fp32 by default (simple `torch.onnx.export`, the public-release default — none of the fp16
 machinery runs). Pass --fp16 for the ~32% smaller partial-fp16 build (see postprocess.py).
 
-Output dir gets: {model}.onnx (fp32 unless --fp16), dsconfig.yaml, {model}.phonemes.txt,
-{model}.leapsinger.json, and (embed) {model}.{spk}.emb per speaker.
+Output: {model}.onnx (fp32 unless --fp16), or {model}.{spk}.onnx when a speaker is baked.
 """
 from __future__ import annotations
 
@@ -28,7 +27,6 @@ import torch
 
 from infer import load_acoustic
 from .wrappers import AcousticExportWrapperA, AcousticExportWrapperB
-from . import dsconfig as dscfg
 from . import spk_embed as spk
 from . import postprocess as post
 
@@ -97,7 +95,7 @@ def main():
     ap.add_argument("--model-name", required=True)
     ap.add_argument("--variant", choices=["diffsinger", "full"], default="diffsinger")
     ap.add_argument("--hop", type=int, choices=[256, 512], default=512,
-                    help="diffsinger only: 512=pseudo-512 (OpenUTAU) | 256=native")
+                    help="diffsinger only: 512=pseudo-512 | 256=native")
     ap.add_argument("--speaker", choices=["none", "embed", "bake"], default="none")
     ap.add_argument("--spk-name", default=None, help="bake: speaker name; embed: unused")
     ap.add_argument("--spk-id", type=int, default=0, help="bake: which speaker id to freeze")
@@ -111,18 +109,12 @@ def main():
     ap.add_argument("--no-simplify", dest="simplify", action="store_false")
     # Replace the ~17 MB DFT-as-matmul excitation with a native ONNX `DFT` node (lossless, -17 MB,
     # a little faster single-threaded). Default on: the forward `DFT` op is supported by the
-    # onnxruntime CPU EP (>= ~1.14), and OpenUTAU bundles onnxruntime 1.23. Use --no-native-dft for
-    # the matmul build, which runs on any ORT (e.g. a very old runtime without the DFT kernel).
+    # onnxruntime CPU EP (>= ~1.14). Use --no-native-dft for the matmul build, which runs on any
+    # ORT (e.g. a very old runtime without the DFT kernel).
     ap.add_argument("--native-dft", dest="native_dft", action="store_true", default=True)
     ap.add_argument("--no-native-dft", dest="native_dft", action="store_false")
-    # Declare OpenUTAU's required `speedup` input (accepted but ignored — our flow is fixed-step).
-    # On by default for the diffsinger variant (the OpenUTAU-targeting one).
-    ap.add_argument("--speedup-input", dest="speedup_input", action="store_true", default=True)
-    ap.add_argument("--no-speedup-input", dest="speedup_input", action="store_false")
     ap.add_argument("--deterministic", action="store_true",
                     help="zero the excitation noise (reproducible; for verification, not deployment)")
-    ap.add_argument("--vocoder-name", default="nhvsing_v6_44k",
-                    help="dsconfig 'vocoder' — the NHVSing vocoder package the host installs")
     ap.add_argument("--verify", action="store_true", help="run ORT parity vs PyTorch after export")
     args = ap.parse_args()
 
@@ -132,17 +124,11 @@ def main():
     _validate(cfg, model, args.variant, args.speaker)
 
     frozen_spk = None
-    speakers_for_cfg = None
     acoustic_file = f"{args.model_name}.onnx"
     if args.speaker == "bake":
         frozen_spk = spk.speaker_vector(model, args.spk_id)
         spk_name = args.spk_name or f"spk{args.spk_id}"
         acoustic_file = f"{args.model_name}.{spk_name}.onnx"
-    elif args.speaker == "embed":
-        # write one .emb per speaker (names default to spk{i})
-        names = {i: (args.spk_name if i == args.spk_id and args.spk_name else f"spk{i}")
-                 for i in range(model.spk_n)}
-        speakers_for_cfg = spk.export_speaker_embeds(model, args.out, args.model_name, names)
 
     wrapper = _build_wrapper(model, args.variant, args.hop, num_steps,
                              args.speaker, frozen_spk).eval()
@@ -158,27 +144,12 @@ def main():
                       dynamic_axes=axes, do_constant_folding=True, dynamo=False)
     print(f"[export] fp32 -> {fp32_path} ({os.path.getsize(fp32_path)/1e6:.1f} MB)")
 
-    add_speedup = args.speedup_input and args.variant == "diffsinger"
     post.finalize(fp32_path, final_path, fp16=args.fp16, do_simplify=args.simplify,
-                  native_dft=args.native_dft, add_speedup=add_speedup)
+                  native_dft=args.native_dft)
     print(f"[export] final -> {final_path} ({os.path.getsize(final_path)/1e6:.1f} MB) "
           f"fp16={args.fp16} simplify={args.simplify}")
     if final_path != fp32_path and os.path.exists(fp32_path):
         os.remove(fp32_path)
-
-    dscfg.write_phonemes(args.out, args.model_name, phonemes=cfg.get("phonemes"))   # phonemes.txt (SP/AP)
-    dscfg.write_dsconfig(args.out, args.model_name, hop=(args.hop if args.variant == "diffsinger" else cfg.get("hop", 256)),
-                         hidden_size=model.hidden, vocoder_name=args.vocoder_name,
-                         speakers=speakers_for_cfg, acoustic_file=acoustic_file)
-    dscfg.write_leapsinger_meta(args.out, args.model_name, variant=args.variant,
-                                hop=(args.hop if args.variant == "diffsinger" else cfg.get("hop", 256)),
-                                use_uv=bool(cfg.get("use_uv", True)), infer_steps=num_steps,
-                                speaker_mode=args.speaker)
-    from . import openutau_assets as oua
-    oua.write_dsdict(args.out)                                      # dsdict.yaml (kana -> phonemes) for the phonemizer
-    print(f"[export] wrote dsconfig.yaml, {args.model_name}.phonemes.txt, dsdict.yaml, "
-          f"{args.model_name}.leapsinger.json"
-          + (f", {len(speakers_for_cfg)} .emb" if speakers_for_cfg else ""))
 
     if args.verify:
         from .verify import verify_full_graph

@@ -51,7 +51,6 @@ def verify_full_graph(wrapper, onnx_path: str, input_names, *, fp16: bool = Fals
     for a meaningful MAE; otherwise only shape/finite is trustworthy. Returns per-length dicts."""
     import onnxruntime as ort
     sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
-    sess_inputs = {i.name for i in sess.get_inputs()}
     det = bool(getattr(wrapper.exc, "deterministic", False))
     variant_full = "uv" in input_names
     speaker_embed = "spk_embed" in input_names
@@ -69,8 +68,6 @@ def verify_full_graph(wrapper, onnx_path: str, input_names, *, fp16: bool = Fals
         if speaker_embed:
             se = np.zeros((1, wrapper.hidden), np.float32); feeds["spk_embed"] = se
             targs.append(torch.as_tensor(se))
-        if "speedup" in sess_inputs:                       # OpenUTAU input, accepted-but-ignored
-            feeds["speedup"] = np.array([1], np.int64)     # (not a wrapper arg — ORT-only)
         with torch.no_grad():
             tmel = wrapper(*targs)[0].numpy()
         omel = sess.run(None, feeds)[0][0]

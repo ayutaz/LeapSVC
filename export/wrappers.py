@@ -1,11 +1,11 @@
 """Export wrappers that turn an HarmonicAcousticModel[MultiSpk] into a single ONNX-traceable
-graph with the input contract OpenUTAU / DiffSinger drive.
+graph with a fixed input contract (tokens, durations, f0).
 
 Two families, chosen by the trained ckpt (the only weight-level split is `use_uv`):
-  * WrapperA  DiffSinger-compatible : inputs [tokens, durations, f0 (+ spk_embed)]. Requires a
+  * WrapperA  diffsinger-layout : inputs [tokens, durations, f0 (+ spk_embed)]. Requires a
               use_uv=False, n_styles=0 model. hop=512 (pseudo: ×2 upsample in, pairwise-average
-              out) is the default OpenUTAU grid; hop=256 native is also offered.
-  * WrapperB  optional-featured     : same core but real v/uv input, hop256 (or free hop).
+              out) is the default grid; hop=256 native is also offered.
+  * WrapperB  optional-featured : same core but real v/uv input, hop256 (or free hop).
 
 Both swap two things that don't otherwise export:
   1. the excitation — `HarmonicNoiseExcitationONNX` (real-DFT STFT, no exp2/fft/complex), and
@@ -15,8 +15,8 @@ Both swap two things that don't otherwise export:
      used instead, so the exported frame axis is truly dynamic. It is numerically identical to
      `repeat_interleave(durations)` (verified in export/verify.py).
 
-Contract (hard): sum(durations) == len(f0). That is exactly how OpenUTAU calls a DiffSinger
-acoustic model, and it makes the length-regulated cond and the excitation the same T.
+Contract (hard): sum(durations) == len(f0); this makes the length-regulated cond and the
+excitation the same T.
 """
 from __future__ import annotations
 
@@ -95,8 +95,8 @@ class _ExportBase(nn.Module):
 
 
 class AcousticExportWrapperA(_ExportBase):
-    """DiffSinger-compatible. forward(tokens, durations, f0 [, spk_embed]) -> mel [1, T, mel_bins].
-    (Output is the DiffSinger [B, T, mel_bins] layout: OpenUTAU feeds it to the vocoder unchanged.)
+    """forward(tokens, durations, f0 [, spk_embed]) -> mel [1, T, mel_bins].
+    (Output is the [B, T, mel_bins] layout, fed to the vocoder unchanged.)
 
     hop=512 (default): durations/f0 are on the hop-512 grid; internally upsampled ×2 to hop256
     (via `up2_linear`), run, then pairwise-averaged back to hop512 (each hop-512 frame = mean of
@@ -127,8 +127,8 @@ class AcousticExportWrapperA(_ExportBase):
         else:
             uv = torch.ones_like(f0l)
             mel = self._run256(tokens, durations, f0l, uv, spk_embed)        # [1,mel,T]
-        # DiffSinger / OpenUTAU consume mel as [B, T, mel_bins] and feed it straight to the vocoder
-        # (the renderer never transposes between acoustic and vocoder). Emit that layout.
+        # Emit the [B, T, mel_bins] layout, fed straight to the vocoder (no transpose between
+        # acoustic and vocoder).
         return mel.transpose(1, 2)                                           # [1, T, mel_bins]
 
 

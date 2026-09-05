@@ -52,7 +52,7 @@ train:
   log_interval: 50
   eval_interval: 500
   eval_items: 5           # one per (speaker × style) unit
-  vocoder: checkpoints/nhv_v3.onnx
+  vocoder: checkpoints/nhv_v3_1.onnx
   num_workers: 4
   pitch_aug: false                    # true = formant-preserving pitch augmentation (needs recipe save_wav: true)
   pitch_aug_semitones: [-3.0, 3.0]    # random semitone range when augmenting (wider is OK: formants are preserved)

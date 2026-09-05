@@ -1,6 +1,6 @@
 """Configuration objects, populated from YAML.
 
-Frame / mel-spectrogram settings default to the OpenUTAU DiffSinger convention, with
+Frame / mel-spectrogram settings default to the DiffSinger convention, with
 **hop size 256** as the only deliberate difference — but every field is configurable,
 so you can train at any frame size / mel resolution by overriding these in your YAML.
 The same MelSpec is shared by preprocessing (mel + F0 frame rate), the dataset loader
