@@ -412,10 +412,10 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 - **CER の日本語歌唱での信頼性。** 上限 0.0 を確認したのは **1 clip** だけです。
 - 256 次元部分集合の seed 比較の**反復**（1 度は実施済み。各 1 run では部分集合の差と run のばらつきを分離できない）。**M4 まで反復せずに進みました。**
 - SVS checkpoint の安全な部分 warm-start。
-- Seed-VC との客観・主観比較。
+- ~~Seed-VC との客観・主観比較~~ — **完了**（M5、2026-09-01 測定 / 2026-09-13 blind）。**結果は Seed-VC 選好**（25 判定中 21）。**話者類似度はほぼ同等**（0.5899 対 0.5912）。**ただし blind は明るさの差に交絡**しており、「target 本人に似ているか」は測っていません。
 - NHVSing target fine-tune。
 - causal / limited-lookahead model、distillation、streaming I/O。
-- end-to-end RTF / latency / 長時間連続動作。
+- **end-to-end latency と長時間連続動作。** **段ごとの RTF は測定済み**（M5。GPU 合計 0.464、**うちボコーダー 0.432 = 93%**）ですが、**chunk 境界・audio I/O・連続運転は未測定**です。**acoustic を速くしても end-to-end はほとんど動きません。**
 - **`--transpose` を使った変換の主観品質。** 移調で明るさが戻ることは測りましたが、
   移調そのものが自然さに与える影響は聴いて確かめていません。
 
@@ -429,8 +429,14 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 6. ~~歌声で較正を通る話者照合 encoder への差し替え~~ — **完了**（ECAPA-TDNN、`eval` extra）。
 7. ~~M5 の指標のうち道具が無いもの~~ — **完了**（timing / CER / 信号品質 / 推論 RTF）。
 8. SVS -> SVC shared-weight warm-start loader と load-report tests（条件付きトラック A。M3 のコストが問題になった場合のみ）。
-9. Seed-VC comparison suite と blind review artifact（M5）。
-10. offline gate 後に streaming student（M6）。
+9. ~~Seed-VC comparison suite と blind review artifact~~ — **完了**（M5、2026-09-13）。
+10. **target 類似の blind**（「どちらが target 本人に似ているか」。**GPU 不要**、材料は `out/m5/blind/`）。**未実施**。
+11. **案 B: base から GAN 付きで学習し直す**（条件付きトラック C の残り。8〜12 時間。**要ユーザー判断**）。
+12. **CER +0.168 の分解**（上限が使える 18 clip で、言語・性別・移調・有声率と突き合わせる）。
+13. **ボコーダーの実行経路の実測**（M6 の前提。GPU の end-to-end RTF の 93% がボコーダー）。
+14. offline gate 後に streaming student（M6）。
+
+10〜14 の位置づけと推奨順は [実行計画](svc-plan.md#2b-ここからの計画) の 2b 節にあります。
 
 ## 7. ブランチと作業ツリー
 
