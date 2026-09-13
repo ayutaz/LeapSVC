@@ -1673,6 +1673,14 @@ class DefectPageTests(unittest.TestCase):
         for col in DEFECT_HEADER.split(","):
             self.assertNotIn("#", col)
 
+    def test_the_label_set_covers_being_quieter_or_smaller(self):
+        # 「音量が揺れる」しか無かったため、**「小さい」を「揺れる」と書かせてしまった**。
+        # 選択肢に無い defect は、近いラベルに化けて記録される。
+        from tools.blind_test import DEFECT_LABELS
+        joined = "".join(DEFECT_LABELS)
+        self.assertIn("小さい", joined)
+        self.assertIn("遠い", joined)
+
     def test_every_defect_label_is_offered(self):
         from tools.blind_test import DEFECT_LABELS, defect_page
         html = defect_page(self.ROWS)

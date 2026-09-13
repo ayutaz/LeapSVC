@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **431 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 196）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **432 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 197）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -228,6 +228,14 @@ fine-tune すると、未知 source の回復率が 69.4% → **75.3%**、signal
 （target 指定で 0.24 → 0.52）。**予測 mel の細部が 25% 欠けている**のが原因で、
 **base も fine-tune も `gan.enabled: false`**（flow 損失 + 再構成損失のみ）でした。
 step を増やすと細部と話者性が**同時に単調に**戻ることで因果を確認しています。
+- **A/B 比較で RMS を揃えても、明るさが揃っていなければ公平ではありません。**
+実測で Seed-VC は 26 clip すべて LeapSVC より明るく（centroid 比 中央値 1.80）、
+評価者は「選んだほうが大きかった」と述べました。**明るい音は同じ RMS でも大きく・
+近く聴こえます**（LUFS の差は中央値 −0.26 LU しかなく、これだけでは説明が付きません）。
+**唯一の引き分けは明るさの差が最小の clip**でした。
+- **選択肢に無い defect は、近いラベルに化けて記録されます。** 「音量が小さい」を
+用意していなかったため、評価者は「音量が揺れる」を選び、私はそれを速い変動として
+測って空振りしました。**名付けの選択肢は、想定していない答えを書ける形にすること。**
 - **聴こえた defect が客観指標で再現しないことがあります。** 聴取で 6 本中 5 本が
 「音量が揺れる」と答えたので `tools/loudness_stability.py` を作りましたが、**LeapSVC の
 ほうが source の抑揚を忠実に追っていました**（残差 2.12 対 4.67 dB、速い成分でも 1.49 対
