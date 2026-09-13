@@ -191,7 +191,7 @@ pre-registered singing calibration, and it shows the fine-tune does move the voi
 target (recovery from the floor rises from 45.1% to 54.9%).
 
 **An objective comparison against Seed-VC has been run** (26 clips, matched conditions).
-**Seed-VC is ahead on speaker similarity** (0.4981 vs 0.5912), and our pre-registered decision
+**Speaker similarity is essentially level** (0.5899 vs 0.5912 after correcting a measurement bug that mixed ceiling files into our own score; the old figure was 0.4981). **Seed-VC won the blind preference**, and our pre-registered decision
 rule therefore forbids claiming LeapSVC is better. **LeapSVC is ahead on pitch fidelity
 (F0 correlation 0.9994), voicing agreement (99.0%) and timing (73.7% vs 70.8%)** -- which is
 what conditioning directly on F0 buys.

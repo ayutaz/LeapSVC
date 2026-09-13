@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **410 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 175）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **414 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 179）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -197,7 +197,7 @@ hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`、`.env` の 
 - 「世界初」「唯一」は使わない（rectified-flow SVC も harmonic modelling も先行研究がある）。
 - 「1-step」は acoustic flow の step 数であり、pipeline 全体の話ではない。
 
-現在の到達点は**完了レベル 3（実データ）**です。実音声から shard を作り、23 話者・約 18 時間の multi-singer base を **60,000 step** 学習し、そこから波音リツへ **20,000 step の fine-tune** まで実施しました（M0〜M4 完了）。**M5（Seed-VC 比較）は客観指標の測定まで完了**し、**話者類似度で Seed-VC が上回った**ため（16 step で 0.4910 対 0.5912）、事前登録した規則により**「Seed-VC より良い」とは書けません**。**SVC 推論の既定は 16 step です**（`tools/svc_defaults.py`。掃引で決定）。**blind listening test だけ未実施**です（評価者が聴く工程。材料は `out/m5/blind/`）。**streaming student（M6）は未着手**です（`doc/svc-implementation-status.md` の検証済み / 未検証の境界を参照）。
+現在の到達点は**完了レベル 4（品質比較）**です。実音声から shard を作り、23 話者・約 18 時間の multi-singer base を **60,000 step** 学習し、そこから波音リツへ **20,000 step の fine-tune** まで実施しました（M0〜M4 完了）。**M5（Seed-VC 比較）は完了**しました。**話者類似度はほぼ同等**（訂正後 0.5899 対 0.5912。旧 0.4910 / 0.4981 は上限混入による測定誤り）ですが、**blind preference で負けた**ため（25 判定中 21）、事前登録した規則により**「Seed-VC より良い」とは書けません**。**SVC 推論の既定は 16 step です**（`tools/svc_defaults.py`。掃引で決定）。**blind listening test も実施済み**です（2026-09-13、26 ペア、N=1 非公式）。**streaming student（M6）は未着手**です（`doc/svc-implementation-status.md` の検証済み / 未検証の境界を参照）。
 
 **M4 で分かった trade-off（実測）:** fine-tune を進めるほど **target らしさは上がり**（話者類似度の回復率 45.1% → 58.0%、自己再構成は上限比 94.8% → 98.1%）、**未知 source の内容保持は単調に落ちます**（cos 0.8599 → 0.8359）。config に事前登録した規則（未知 source の cos が base から 0.02 を超えて落ちた checkpoint は選ばない）で **`ckpt_010000` を選択**しました。train loss だけで選ぶと 20,000 step を選んでしまいます。
 
@@ -228,6 +228,15 @@ fine-tune すると、未知 source の回復率が 69.4% → **75.3%**、signal
 （target 指定で 0.24 → 0.52）。**予測 mel の細部が 25% 欠けている**のが原因で、
 **base も fine-tune も `gan.enabled: false`**（flow 損失 + 再構成損失のみ）でした。
 step を増やすと細部と話者性が**同時に単調に**戻ることで因果を確認しています。
+- **上限（`*_vocoder_only.wav`）を変換結果として数えないこと。** `--self-check` を
+付けて変換すると 1 clip につき `_converted` / `_source` / `_vocoder_only` が並びます。
+`tools/speaker_similarity.py` は `_source` しか除いておらず、**変換結果 13 本と上限 13 本を
+混ぜて**平均していました。**baseline のディレクトリには上限が無い**ので、別種のファイルを
+比べることになります（実測で話者類似度が 0.5886 → 0.4981 に見えていました）。
+`pick_clips()` が両方を落とします。**`--n-clips` の既定は 16 で、26 clip を黙って切ります** ―
+切り詰めは report に残るようにしました。
+- **2 つの測定が食い違ったまま並んでいたら、どちらかが壊れています。** 同じ量を別経路で
+測った値が 0.5676 と 0.4910 で食い違っていたのに、両方を文書に載せたまま進めました。
 - **M5 の測定はすべて NHVSing V3 で行いました。** 2026-09-13 に上流の
 **V3.1**（倍音のにじみと高域の縞を修正）を取り込み、config とツールの既定を
 `nhv_v3_1.onnx` へ切り替えましたが、**`out/m5/` の数値は V3 のものです**。
