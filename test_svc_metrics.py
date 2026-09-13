@@ -1629,3 +1629,130 @@ class TransposeResolutionTests(unittest.TestCase):
         from tools.pitch_metrics import resolve_transposes
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(resolve_transposes(d), {})
+
+
+class DefectPageTests(unittest.TestCase):
+    """劣るほうの「何が悪いか」を名付けるページ。順位付けではなく名前を取る。"""
+
+    ROWS = [{"pair": "pair02", "clip": "unseen17", "vote": "A"},
+            {"pair": "pair09", "clip": "unseen14", "vote": "B"}]
+
+    def test_it_asks_about_the_side_that_was_not_preferred(self):
+        # 好んだほうの欠点を聞いても仕方がない。**負けたほうを聞く。**
+        from tools.blind_test import defect_page
+        html = defect_page(self.ROWS)
+        self.assertIn('"ask": "B"', html.replace("'", '"'))
+        self.assertIn('"ask": "A"', html.replace("'", '"'))
+
+    def test_rows_without_a_vote_are_refused(self):
+        # 票が無いと「劣るほう」が決まらない。
+        from tools.blind_test import defect_page
+        with self.assertRaises(ValueError):
+            defect_page([{"pair": "pair02", "clip": "unseen17", "vote": ""}])
+
+    def test_ties_are_refused(self):
+        from tools.blind_test import defect_page
+        with self.assertRaises(ValueError):
+            defect_page([{"pair": "pair02", "clip": "unseen17", "vote": "tie"}])
+
+    def test_system_names_never_reach_the_page(self):
+        from tools.blind_test import defect_page
+        html = defect_page(self.ROWS).lower()
+        for name in ("leapsvc", "seedvc", "seed-vc"):
+            self.assertNotIn(name, html)
+
+    def test_key_rows_are_refused(self):
+        from tools.blind_test import defect_page
+        with self.assertRaises(ValueError):
+            defect_page([{"pair": "pair02", "clip": "unseen17", "vote": "A",
+                          "A": "leapsvc", "B": "seedvc"}])
+
+    def test_header_has_no_comment_in_a_column_name(self):
+        # `vote  # ...` で 26 票を失った。**同じ形を繰り返さない。**
+        from tools.blind_test import DEFECT_HEADER
+        for col in DEFECT_HEADER.split(","):
+            self.assertNotIn("#", col)
+
+    def test_every_defect_label_is_offered(self):
+        from tools.blind_test import DEFECT_LABELS, defect_page
+        html = defect_page(self.ROWS)
+        for label in DEFECT_LABELS:
+            self.assertIn(label, html)
+
+
+class LoudnessStabilityTests(unittest.TestCase):
+    """音量の揺れ。**blind で 6 本中 5 本が挙げた defect**を客観化する。"""
+
+    def _tone(self, n, amp=0.2, sr=44100):
+        import numpy as np
+        t = np.arange(n) / sr
+        return (amp * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+    def test_constant_amplitude_gives_a_flat_envelope(self):
+        import numpy as np
+
+        from tools.loudness_stability import loudness_envelope
+        env = loudness_envelope(self._tone(44100), sr=44100, hop=256)
+        self.assertGreater(len(env), 100)
+        self.assertLess(float(np.std(env)), 0.5)     # dB
+
+    def test_a_gain_difference_alone_is_not_wobble(self):
+        # 全体の音量差は揺れではない。**平均を取り除いてから見る。**
+        from tools.loudness_stability import loudness_report
+        src = self._tone(44100, amp=0.2)
+        cnv = self._tone(44100, amp=0.05)            # 12 dB 小さいだけ
+        r = loudness_report(src, cnv, sr=44100, hop=256)
+        self.assertLess(r["residual_db_std"], 0.5)
+        self.assertGreater(r["envelope_corr"], 0.5)
+
+    def test_amplitude_modulation_raises_the_residual(self):
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        n = 44100 * 2
+        src = self._tone(n, amp=0.2)
+        t = np.arange(n) / 44100
+        wobble = (1.0 + 0.6 * np.sin(2 * np.pi * 4.0 * t)).astype(np.float32)
+        r = loudness_report(src, src * wobble, sr=44100, hop=256)
+        self.assertGreater(r["residual_db_std"], 2.0)
+
+    def test_silence_does_not_dominate(self):
+        # 無音区間の log-RMS は極端に小さい。**下限より下は使わない。**
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        src = np.concatenate([self._tone(44100), np.zeros(44100, dtype="float32")])
+        r = loudness_report(src, src.copy(), sr=44100, hop=256)
+        self.assertLess(r["residual_db_std"], 0.5)
+        # 2 秒ぶんのフレームがあるが、使うのは鳴っている 1 秒ぶんだけ。
+        self.assertLess(r["n_frames_used"], r["n_frames_total"] * 0.7)
+
+    def test_no_usable_frames_returns_none(self):
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        z = np.zeros(44100, dtype="float32")
+        r = loudness_report(z, z, sr=44100, hop=256)
+        self.assertIsNone(r["residual_db_std"])
+
+    def test_slow_drift_and_fast_wobble_are_separated(self):
+        # 「揺れる」は**速さ**の話。ゆっくりした抑揚のずれと区別しないと捉えられない。
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        sr, n = 44100, 44100 * 4
+        t = np.arange(n) / sr
+        base = (0.2 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+        slow = (1.0 + 0.5 * np.sin(2 * np.pi * 0.2 * t)).astype(np.float32)   # 0.2 Hz
+        fast = (1.0 + 0.3 * np.sin(2 * np.pi * 6.0 * t)).astype(np.float32)   # 6 Hz
+        rs = loudness_report(base, base * slow, sr=sr, hop=256)
+        rf = loudness_report(base, base * fast, sr=sr, hop=256)
+        self.assertGreater(rs["slow_db_std"], rs["fast_db_std"] * 3)
+        self.assertGreater(rf["fast_db_std"], rf["slow_db_std"] * 3)
+
+    def test_fast_component_is_none_without_usable_frames(self):
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        z = np.zeros(44100, dtype="float32")
+        self.assertIsNone(loudness_report(z, z, sr=44100, hop=256)["fast_db_std"])

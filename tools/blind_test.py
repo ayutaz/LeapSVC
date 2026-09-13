@@ -578,6 +578,269 @@ def _cmd_tally(a) -> int:
     return 0
 
 
+DEFECT_LABELS = ("ざらつく", "こもる", "子音が潰れる", "音程が揺れる",
+                 "途切れる", "機械的", "息が不自然", "音量が揺れる")
+# **列名に説明を入れません。** `vote  # vote に A / B / tie を書く` というヘッダで
+# `csv.DictReader` が列を引けず、26 票を丸ごと落としました（[read_sheet](#) 参照）。
+DEFECT_HEADER = "pair,clip,side,defects,note"
+
+
+def defect_page(rows: Sequence[dict], *, title: str = "defect naming",
+                references: Sequence[dict] = ()) -> str:
+    """**劣ったほうの「何が悪いか」を名付ける**ページを組み立てる。
+
+    blind preference は「どちらが良いか」しか残しません。**足りないのは defect の名前**
+    です。名付けに統計的な検出力は要らないので、少数のペアで足ります。
+
+    **聞くのは、その人が好まなかったほう**です（`vote` が A なら B について聞く）。
+    好んだほうの欠点を集めても、負けた理由は分かりません。**引き分けと未記入は
+    受け取りません** ―― どちらが劣るか決まらないためです。
+
+    **どちらがどの系かは、このページからは分かりません。** 対応は `key.json` にあり、
+    集計のときだけ突き合わせます。
+    """
+    import json
+
+    rows = list(rows)
+    if not rows:
+        raise ValueError("行がありません")
+    clean = []
+    for r in rows:
+        if "A" in r or "B" in r:
+            raise ValueError(f"key.json の行を渡しています（{r.get('pair')}）")
+        vote = str(r.get("vote") or "").strip()
+        if vote not in ("A", "B"):
+            raise ValueError(f"{r.get('pair')}: vote が {vote!r}。"
+                             "劣ったほうを聞くので、A か B が付いた行だけを渡すこと")
+        pair = str(r["pair"])
+        ask = "B" if vote == "A" else "A"
+        item = {"pair": pair, "clip": str(r["clip"]), "preferred": vote, "ask": ask,
+                "a": f"audio/{pair}_A.wav", "b": f"audio/{pair}_B.wav",
+                "ab": f"paired/{pair}_AB.wav",
+                "defects": str(r.get("defects") or ""), "note": str(r.get("note") or "")}
+        if r.get("source"):
+            item["source"] = _check_path(r["source"], f"{pair} の変換元")
+        clean.append(item)
+
+    refs = [{"label": str(x["label"]), "path": _check_path(x["path"], "参照")}
+            for x in references]
+    return (_DEFECT_TEMPLATE
+            .replace("__TITLE__", title)
+            .replace("__HEADER__", json.dumps(DEFECT_HEADER, ensure_ascii=False))
+            .replace("__LABELS__", json.dumps(list(DEFECT_LABELS), ensure_ascii=False))
+            .replace("__REFS__", json.dumps(refs, ensure_ascii=False, indent=1))
+            .replace("__ROWS__", json.dumps(clean, ensure_ascii=False, indent=1)))
+
+
+_DEFECT_TEMPLATE = r"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+ :root{color-scheme:dark;--bg:#14161a;--fg:#e8eaed;--dim:#9aa0a6;--line:#2a2e35;
+       --acc:#7cc4ff;--ok:#7ddc8f;--warn:#d9b45b}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--fg);
+      font:15px/1.65 system-ui,"Segoe UI","Yu Gothic UI",sans-serif}
+ .wrap{max-width:780px;margin:0 auto;padding:24px 20px 64px}
+ h1{font-size:19px;margin:0 0 4px}
+ .sub{color:var(--dim);font-size:13px;margin:0 0 16px}
+ .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:14px 0 6px}
+ .bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .2s}
+ .count{color:var(--dim);font-size:13px;display:flex;justify-content:space-between}
+ .card{border:1px solid var(--line);border-radius:12px;padding:20px;margin:18px 0;
+       background:#191c21}
+ .pair{font-size:22px;font-weight:600}
+ .clip{color:var(--dim);font-size:13px;margin-top:2px}
+ .ask{margin-top:12px;padding:10px 14px;border-left:3px solid var(--warn);
+      background:#1c1a15;border-radius:0 8px 8px 0;font-size:14px}
+ .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+ button{font:inherit;color:var(--fg);background:#232830;border:1px solid var(--line);
+        border-radius:9px;padding:10px 15px;cursor:pointer}
+ button:hover{border-color:var(--acc)}
+ button:disabled{opacity:.4;cursor:default}
+ .play.on{border-color:var(--acc);background:#1d2c3a}
+ .chip[data-on="1"]{background:#1e3326;border-color:var(--ok);color:var(--ok)}
+ textarea,input[type=text]{width:100%;background:#0f1114;color:var(--fg);
+   border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;margin-top:10px}
+ #csv{height:150px;font:12px/1.5 ui-monospace,Consolas,monospace}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px;
+       margin-top:10px}
+ .grid button{padding:7px 4px;font-size:12px}
+ .grid button.done{border-color:var(--ok);color:var(--ok)}
+ .grid button.cur{background:#1d2c3a;border-color:var(--acc)}
+ .keys{color:var(--dim);font-size:12px;margin-top:12px}
+ kbd{background:#232830;border:1px solid var(--line);border-radius:4px;padding:1px 6px;
+     font:12px ui-monospace,Consolas,monospace}
+</style></head><body><div class="wrap">
+<h1>劣ったほうの「何が悪いか」を名付ける</h1>
+<p class="sub">どちらが良いかは前回で決まっています。ここで取るのは <b>defect の名前</b>です。
+どちらがどの系かは表示されません。</p>
+
+<div id="ctx"></div>
+
+<div class="bar"><i id="fill"></i></div>
+<div class="count"><span id="done"></span><span id="pos"></span></div>
+
+<div class="card">
+ <div class="pair" id="pair"></div>
+ <div class="clip" id="clip"></div>
+ <div class="ask" id="askbox"></div>
+ <div class="row">
+  <button class="play" id="pAB">A → B を続けて <span style="color:var(--dim)">(1)</span></button>
+  <button class="play" id="pA">A だけ <span style="color:var(--dim)">(2)</span></button>
+  <button class="play" id="pB">B だけ <span style="color:var(--dim)">(3)</span></button>
+  <button id="stop">停止 <span style="color:var(--dim)">(0)</span></button>
+ </div>
+ <div class="row" id="chips"></div>
+ <input type="text" id="note" placeholder="ほかに気づいたことがあれば一言（任意）">
+ <p class="keys">当てはまるものを選びます。<b>複数選んで構いません。</b>
+  無ければ一言だけ書いてください。<kbd>←</kbd><kbd>→</kbd> で移動。</p>
+ <div class="row">
+  <button id="prev">← 前へ</button><button id="next">次へ →</button>
+ </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<h2 style="font-size:16px;margin:28px 0 6px">書き出し</h2>
+<p class="sub" style="margin:0 0 10px">この内容を <code>out/m5/blind/defects.csv</code> として保存します。</p>
+<div class="row" style="margin-top:0">
+ <button id="dl">defects.csv をダウンロード</button>
+ <button id="copy">クリップボードへコピー</button>
+</div>
+<textarea id="csv" readonly></textarea>
+
+<audio id="au"></audio>
+</div><script>
+const ROWS = __ROWS__;
+const REFS = __REFS__;
+const LABELS = __LABELS__;
+const HEADER = __HEADER__;
+const KEY = "leapsinger-defects";
+const au = document.getElementById("au");
+const $ = id => document.getElementById(id);
+let i = 0, state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
+for (const r of ROWS) {
+  if (!state[r.pair] && (r.defects || r.note))
+    state[r.pair] = {defects: r.defects ? r.defects.split("|") : [], note: r.note};
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+function cur() { return state[ROWS[i].pair] || (state[ROWS[i].pair] = {defects: [], note: ""}); }
+function filled(p) { const s = state[p]; return s && (s.defects.length || (s.note || "").trim()); }
+
+function csv() {
+  const nl = String.fromCharCode(10);
+  const q = s => (/[",]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s);
+  const lines = [HEADER];
+  for (const r of ROWS) {
+    const s = state[r.pair] || {defects: [], note: ""};
+    lines.push([r.pair, r.clip, r.ask, q(s.defects.join("|")), q(s.note || "")].join(","));
+  }
+  return lines.join(nl) + nl;
+}
+
+function play(kind) {
+  const r = ROWS[i];
+  au.src = kind === "AB" ? r.ab : (kind === "A" ? r.a : r.b);
+  au.currentTime = 0; au.play().catch(() => {});
+  for (const b of document.querySelectorAll(".play")) b.classList.remove("on");
+  $("p" + kind).classList.add("on");
+}
+
+(function context() {
+  if (!REFS.length) return;
+  const box = $("ctx"), row = document.createElement("div");
+  row.className = "row"; row.style.marginTop = "0";
+  const cap = document.createElement("p");
+  cap.className = "sub"; cap.style.margin = "0";
+  cap.innerHTML = "<b>参照</b>（どちらの系の出力でもありません）";
+  box.appendChild(cap);
+  for (const r of REFS) {
+    const b = document.createElement("button");
+    b.textContent = r.label;
+    b.onclick = () => { au.src = r.path; au.currentTime = 0; au.play().catch(() => {}); };
+    row.appendChild(b);
+  }
+  const s = document.createElement("button");
+  s.id = "pSRC"; s.textContent = "このペアの変換元 (4)";
+  s.onclick = () => { const r = ROWS[i]; if (!r.source) return;
+                      au.src = r.source; au.currentTime = 0; au.play().catch(() => {}); };
+  row.appendChild(s);
+  box.appendChild(row);
+})();
+
+function render() {
+  const r = ROWS[i], s = cur();
+  $("pair").textContent = r.pair;
+  $("clip").textContent = r.clip;
+  $("askbox").innerHTML = "前回あなたが選んだのは <b>" + r.preferred +
+    "</b> でした。<b>" + r.ask + " の何が気になりましたか。</b>";
+  const n = ROWS.filter(x => filled(x.pair)).length;
+  $("fill").style.width = (100 * n / ROWS.length) + "%";
+  $("done").textContent = n + " / " + ROWS.length + " 記入済み";
+  $("pos").textContent = (i + 1) + " ペア目";
+  const box = $("chips"); box.innerHTML = "";
+  for (const label of LABELS) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = label;
+    b.dataset.on = s.defects.includes(label) ? "1" : "0";
+    b.onclick = () => {
+      const k = s.defects.indexOf(label);
+      if (k < 0) s.defects.push(label); else s.defects.splice(k, 1);
+      save(); render();
+    };
+    box.appendChild(b);
+  }
+  $("note").value = s.note || "";
+  $("prev").disabled = i === 0;
+  $("next").disabled = i === ROWS.length - 1;
+  const sb = $("pSRC"); if (sb) sb.disabled = !r.source;
+  const g = $("grid"); g.innerHTML = "";
+  ROWS.forEach((x, k) => {
+    const b = document.createElement("button");
+    b.textContent = x.pair.replace("pair", "") + (filled(x.pair) ? " ●" : "");
+    if (filled(x.pair)) b.className = "done";
+    if (k === i) b.className += " cur";
+    b.onclick = () => { i = k; render(); };
+    g.appendChild(b);
+  });
+  $("csv").value = csv();
+}
+
+$("note").oninput = () => { cur().note = $("note").value; save(); $("csv").value = csv(); };
+$("pAB").onclick = () => play("AB");
+$("pA").onclick = () => play("A");
+$("pB").onclick = () => play("B");
+$("stop").onclick = () => au.pause();
+$("prev").onclick = () => { if (i > 0) { i--; render(); } };
+$("next").onclick = () => { if (i < ROWS.length - 1) { i++; render(); } };
+$("dl").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv()], {type: "text/csv"}));
+  a.download = "defects.csv"; a.click();
+};
+$("copy").onclick = () => {
+  navigator.clipboard.writeText(csv()).catch(() => {});
+  $("copy").textContent = "コピーしました";
+  setTimeout(() => { $("copy").textContent = "クリップボードへコピー"; }, 1200);
+};
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  const k = e.key.toLowerCase();
+  if (k === "1") play("AB"); else if (k === "2") play("A"); else if (k === "3") play("B");
+  else if (k === "0") au.pause();
+  else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
+  else if (e.key === "ArrowRight") { if (i < ROWS.length - 1) { i++; render(); } }
+  else return;
+  e.preventDefault();
+});
+render();
+</script></body></html>
+"""
+
+
 def _cmd_page(a) -> int:
     rows = read_sheet(a.sheet)
     out = Path(a.out) if a.out else Path(a.sheet).parent / "listen.html"
@@ -624,6 +887,34 @@ def _cmd_page(a) -> int:
     return 0
 
 
+def _cmd_page_defects(a) -> int:
+    rows = [r for r in read_sheet(a.sheet) if r["vote"] in ("A", "B")]
+    if a.clips:
+        want = set(a.clips)
+        rows = [r for r in rows if r["clip"] in want]
+        missing = want - {r["clip"] for r in rows}
+        if missing:
+            sys.exit(f"票のある行に見つかりません: {sorted(missing)}")
+    if not rows:
+        sys.exit("A / B の票がある行がありません（tie と未記入は聞けません）")
+
+    out = Path(a.out) if a.out else Path(a.sheet).parent / "defects.html"
+    root, refs = out.parent, []
+    ctx = root / "context"
+    if (ctx / "target_ref.wav").exists():
+        refs.append({"label": a.target_label, "path": "context/target_ref.wav"})
+    for r in rows:
+        p = ctx / f"{r['pair']}_source.wav"
+        if p.exists():
+            r["source"] = f"context/{p.name}"
+    out.write_text(defect_page(rows, references=refs), encoding="utf-8")
+    print(f"[defects] {len(rows)} ペア -> {out}")
+    for r in rows:
+        print(f"  {r['pair']}  {r['clip']:10s} 前回 {r['vote']} -> "
+              f"{'B' if r['vote'] == 'A' else 'A'} について聞く")
+    return 0
+
+
 def main() -> int:
     import argparse
 
@@ -655,6 +946,13 @@ def main() -> int:
     p3.add_argument("--source-dir", default=None,
                     help="`<曲>__<clip>_source.wav` が並ぶディレクトリ（変換元。両系で同一）")
     p3.set_defaults(func=_cmd_page)
+
+    p4 = sub.add_parser("page-defects", help="劣ったほうの欠点を名付けるページを作る")
+    p4.add_argument("--sheet", required=True, help="投票済みの sheet.csv")
+    p4.add_argument("--clips", nargs="*", default=None, help="この clip だけに絞る")
+    p4.add_argument("--out", default=None)
+    p4.add_argument("--target-label", default="target 本人の録音")
+    p4.set_defaults(func=_cmd_page_defects)
 
     a = ap.parse_args()
     return a.func(a)

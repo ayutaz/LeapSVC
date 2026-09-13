@@ -42,7 +42,8 @@
 | [`tools/pitch_metrics.py`](../tools/pitch_metrics.py) | 追加済み | M5 の F0 相関 / 半音差 / V-UV。**変換済み WAV から測る**ので両システムに当たる |
 | [`tools/m5_testset.py`](../tools/m5_testset.py) | 追加済み | M5 の test set を決定的に組む。**有声率の下限**と 1 歌手 1 clip を強制 |
 | [`tools/svc_batch.py`](../tools/svc_batch.py) | 追加済み | 複数 clip を 1 プロセスで変換。**変換条件の一致を機械検査**する |
-| [`tools/blind_test.py`](../tools/blind_test.py) | 追加済み | blind preference の材料作成・**聴取ページ生成**・集計。system 名を隠し、順序を randomize。**上限を参照に渡すと落ちる**（ボコーダーの癖で系が割れるため） |
+| [`tools/loudness_stability.py`](../tools/loudness_stability.py) | 追加済み | 音量の揺れ（source 基準なので**系をまたげる**）。速い成分と遅い成分を分ける。**聴取で名前が付いた defect を客観化したが、再現しなかった** |
+| [`tools/blind_test.py`](../tools/blind_test.py) | 追加済み | blind preference の材料作成・**聴取ページ生成**・**defect 名付けページ**・集計。system 名を隠し、順序を randomize。**上限を参照に渡すと落ちる**（ボコーダーの癖で系が割れるため） |
 | [`tools/guard_rail.py`](../tools/guard_rail.py) | 追加済み | 事前登録した判定。**guard rail が 1 つでも落ちたら「より良い」と書けない** |
 | [`tools/failure_taxonomy.py`](../tools/failure_taxonomy.py) | 追加済み | M5 ゴール 4。failure を除外せず分類して残す |
 | [`tools/normalise_outputs.py`](../tools/normalise_outputs.py) | 追加済み | 外部 baseline の出力を測定ツールが読む形へ揃える |
@@ -174,7 +175,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 ### 確認済み
 
 - ボコーダーは **NHVSing V3.1**（`checkpoints/nhv_v3_1.onnx`。2026-09-13 に上流から取り込み）。**M5 の測定値は V3 で取ったもの**なので、V3.1 で測り直した値と混ぜないこと。
-- 自動テスト **417 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 182）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **431 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 196）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **51 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。
