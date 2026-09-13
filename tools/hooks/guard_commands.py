@@ -25,7 +25,8 @@ RULES: list[tuple[str, str, str]] = [
      "`uv add <pkg>` を使う。既存の依存を入れ直すだけなら `uv sync --extra train --extra export`"),
 
     # 行頭 / パイプ / && の直後に来る素の python。`uv run python` は許可。
-    (r"(?:^|[;&|]\s*|\(\s*)(?!uv\s)(python3?|py)\s+(-m\s+|[\w./\\-]+\.py)",
+    # `-m` と `.py` だけを見ていたため、**`-c` と `-`（stdin）が素通り**していた（実際に踏んだ）。
+    (r"(?:^|[;&|]\s*|\(\s*)(?!uv\s)(python3?|py)\s+(-m\s+|-c\s|-\s*(<<|$)|[\w./\\-]+\.py)",
      "素の python では .venv を使わないので torch も librosa も入っていない",
      "`uv run python -m <module>` / `uv run python <script.py>` にする"),
 
@@ -134,6 +135,29 @@ def check_pkill(cmd: str) -> tuple[str, str] | None:
             "列挙するだけなら `pgrep -fa <pattern>`")
 
 
+def check_uv_during_rebase(cmd: str, root: str | None = None) -> tuple[str, str] | None:
+    """**rebase / merge の途中で `uv run` / `uv sync` / `uv add` を打たない。**
+
+    作業ツリーは過去のコミットにあるので、**その時点の `pyproject.toml` で環境が再同期
+    されます**。実際に torch が 2.14 -> 2.13 へ入れ替わり、生成された `uv.lock` が未追跡
+    ファイルとして残って **rebase が中断しました**（"Please move or remove them"）。
+
+    競合の解決には `sed` / `awk` / エディタを使い、テストや lint は **rebase を終えてから**
+    回します。
+    """
+    import os
+
+    if not re.search(r"(?<![\w./-])uv\s+(run|sync|add|lock|pip)\b", cmd):
+        return None
+    git = Path(root or os.getcwd()) / ".git"
+    if not (git / "rebase-merge").exists() and not (git / "rebase-apply").exists():
+        return None
+    return ("rebase の途中。作業ツリーが過去のコミットなので、uv が**その時点の pyproject で"
+            "環境を再同期**し、生成された uv.lock が rebase を止める（実際に発生）",
+            "競合の解決は sed / awk / エディタで行い、テストと lint は "
+            "`git rebase --continue` で最後まで進めてから回す")
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -143,7 +167,7 @@ def main() -> int:
     if not cmd or ALLOW_MARK in cmd:
         return 0
 
-    for check in (check_train, check_local_training, check_pkill):
+    for check in (check_train, check_local_training, check_pkill, check_uv_during_rebase):
         hit = check(cmd)
         if hit:
             why, instead = hit

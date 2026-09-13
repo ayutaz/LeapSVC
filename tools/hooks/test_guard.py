@@ -28,6 +28,12 @@ BLOCK = [
     "git push --force origin main",
     "git reset --hard HEAD~1",
     "rm -rf log/",
+    # 素の python の抜け道。`-m` と `.py` しか見ていなかったので `-c` と `-`（stdin）が
+    # 素通りしていた（実際に踏んだ）。.venv の外で走るので torch も librosa も無い。
+    'python -c "import torch"',
+    "python3 -c 'print(1)'",
+    "cat x.py | python -",
+    "python - <<'PY'",
     "rm -rf data",
     "vastai create instance 123 --image x",
     "vastai destroy instance 5",
@@ -66,6 +72,41 @@ ALLOW = [
     "pgrep -fa m3_corpus",                     # 列挙するだけなので害はない
     'pkill -f "python -m train"  # guard:allow',
 ]
+
+
+def check_uv_during_rebase() -> int:
+    """**rebase 中に `uv run` / `uv sync` を打たないこと。**
+
+    作業ツリーが過去のコミットにあるので、その時点の `pyproject.toml` で環境が
+    再同期されます。実際に torch が 2.14 -> 2.13 へ入れ替わり、生成された `uv.lock` が
+    未追跡ファイルとして残って **rebase が中断しました**。
+    """
+    import os
+    import subprocess as sp
+
+    bad = 0
+    tmp = Path(tempfile.mkdtemp(prefix="guard_rebase_"))
+    try:
+        sp.run(["git", "init", "-q", str(tmp)], check=True)
+        (tmp / ".git" / "rebase-merge").mkdir()
+        cases = [("uv run python -m unittest test_svc_model", 2),
+                 ("uv sync --extra train", 2),
+                 ("uv add numpy", 2),
+                 ("uv run python -m unittest test_svc_model  # guard:allow", 0),
+                 ("git rebase --continue", 0),
+                 ("git status", 0),
+                 ("cat README.md", 0)]
+        for cmd, want in cases:
+            p2 = sp.run([sys.executable, str(GUARD)], cwd=str(tmp), text=True,
+                        input=json.dumps({"tool_name": "Bash",
+                                          "tool_input": {"command": cmd}}),
+                        capture_output=True, env={**os.environ})
+            if p2.returncode != want:
+                print(f"NG rebase 中チェック (want {want}): {cmd}")
+                bad += 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return bad
 
 
 def run(cmd: str) -> int:
@@ -134,6 +175,7 @@ def main() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     bad += check_local_training()
+    bad += check_uv_during_rebase()
     total = len(BLOCK) + len(ALLOW) + 3 + 7
     print(f"{total - bad}/{total} 一致" + ("" if bad else "  （すべて期待どおり）"))
     return bad

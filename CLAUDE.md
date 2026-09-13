@@ -79,7 +79,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
     uv run python -m unittest test_svc_metrics -v     # M5 の客観指標（timing / CER / 信号品質 / RTF）
     LEAPSINGER_INTEGRATION=1 uv run python -m unittest test_svc_preprocess_integration -v  # 実モデル（既定は skip）
     uv run python -m unittest test_svc_model.HarmonicSVCModelTests.test_forward_and_infer_reuse_flow_with_svc_conditioning
-    uv run python tools/hooks/test_guard.py    # コマンド guard の回帰テスト（51 件）
+    uv run python tools/hooks/test_guard.py    # コマンド guard の回帰テスト（55 件）
 
     # 話者類似度。**encoder を替えたら必ず較正からやり直すこと**
     uv run python tools/speaker_calibrate.py --root .m0data/vocalset_calib \
@@ -175,9 +175,9 @@ manifest には encoder の model revision と層、sample rate、hop、**SSL �
 | skill | `leapsinger-experiment` | 学習実験を事故なく回す手順（run 名、無視される設定、記録、主張の範囲） |
 | skill | `leapsinger-docs` | 確度ラベルと主張規則を保ったままドキュメントを更新する作法 |
 | skill | `vast-instance` | vast.ai インスタンスの検索・作成・回収・破棄、実運用で踏んだ落とし穴 |
-| hook | `tools/hooks/guard_commands.py` | `PreToolUse` で「常に間違い」なコマンドを実行前に止める（回帰テスト 51 件） |
+| hook | `tools/hooks/guard_commands.py` | `PreToolUse` で「常に間違い」なコマンドを実行前に止める（回帰テスト 55 件） |
 
-hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`、`.env` の staging、`git push --force`、`git reset --hard`、`log|data|checkpoints|.git` の `rm -rf`、`vastai` の直接叩き（料金確認を飛ばすため）、`unittest discover`、**手元での学習**（device によらず）、**既存 ckpt がある run へ `--init_from` を渡す**こと（`train.py` はこれを黙って無視して自動再開します）、**取得スクリプトの `-m` 実行**（`_gdrive` の兄弟 import が解決できず必ず失敗）、**`CUDA_VISIBLE_DEVICES=""`**（空文字は未設定扱いで CUDA が隠れない。`-1` が要る）、**角括弧で自己一致を外していない `pkill -f`**（このハーネスは `bash -c` で走るのでシェル自身に一致し、後続のコマンドごと落ちます）。
+hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と `.py` だけでなく `-c` と `-`（stdin）も**。この 2 つは素通りしていました）、**rebase / merge の途中での `uv run` / `uv sync` / `uv add`**（作業ツリーが過去のコミットなので、その時点の `pyproject.toml` で環境が再同期され、生成された `uv.lock` が rebase を止めます。実際に torch が 2.14 → 2.13 に入れ替わって中断しました）、`.env` の staging、`git push --force`、`git reset --hard`、`log|data|checkpoints|.git` の `rm -rf`、`vastai` の直接叩き（料金確認を飛ばすため）、`unittest discover`、**手元での学習**（device によらず）、**既存 ckpt がある run へ `--init_from` を渡す**こと（`train.py` はこれを黙って無視して自動再開します）、**取得スクリプトの `-m` 実行**（`_gdrive` の兄弟 import が解決できず必ず失敗）、**`CUDA_VISIBLE_DEVICES=""`**（空文字は未設定扱いで CUDA が隠れない。`-1` が要る）、**角括弧で自己一致を外していない `pkill -f`**（このハーネスは `bash -c` で走るのでシェル自身に一致し、後続のコマンドごと落ちます）。
 
 止めすぎると自動運転が壊れるので、判断の余地がないものだけを対象にしています。どうしても必要なときはコマンド末尾に `# guard:allow` を付けると通ります。ルールを足したら `tools/hooks/test_guard.py` にケースも足してください。
 
@@ -228,6 +228,11 @@ fine-tune すると、未知 source の回復率が 69.4% → **75.3%**、signal
 （target 指定で 0.24 → 0.52）。**予測 mel の細部が 25% 欠けている**のが原因で、
 **base も fine-tune も `gan.enabled: false`**（flow 損失 + 再構成損失のみ）でした。
 step を増やすと細部と話者性が**同時に単調に**戻ることで因果を確認しています。
+- **rebase の途中で `uv run` を打たないこと。** 作業ツリーが過去のコミットにあるので、
+**その時点の `pyproject.toml` で環境が再同期**されます（実測で torch 2.14 → 2.13）。生成された
+`uv.lock` が未追跡ファイルとして残り、**rebase が "Please move or remove them" で中断**しました。
+競合の解決は `sed` / `awk` / エディタで行い、**テストと lint は rebase を終えてから**回します。
+hook が止めます。
 - **出力の明るさを上げて「良く聴こえる」ようにしないこと（2026-09-13 決定）。**
 target 本人の録音は centroid 1160 Hz、LeapSVC は 1067 Hz でほぼ一致します。Seed-VC は
 2149 Hz で **1.85 倍明るく**、そのぶん大きく・近く聴こえて preference を取ります。
