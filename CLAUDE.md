@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## このリポジトリについて
 
-LeapSinger は歌声合成（SVS）用の音響モデルです。ランダムノイズではなく **F0 から作った「擬似 mel」（倍音インパルス＋白色ノイズ）を rectified flow の出発点 `x0`** にすることで、1 ステップ（`num_steps: 1`）で mel を生成します。mel → 波形は別リポジトリの NHVSing ボコーダー（`checkpoints/nhv_v3*.onnx`）が担当します。
+LeapSinger は歌声合成（SVS）用の音響モデルです。ランダムノイズではなく **F0 から作った「擬似 mel」（倍音インパルス＋白色ノイズ）を rectified flow の出発点 `x0`** にすることで、1 ステップ（`num_steps: 1`）で mel を生成します。mel → 波形は別リポジトリの NHVSing ボコーダー（`checkpoints/nhv_v3_1*.onnx`）が担当します。
 
 現在のブランチ `feature/svc` では、既存 SVS を残したまま **歌声変換（SVC）経路**を追加中です。設計・調査ドキュメントは `doc/svc.md` が索引になっています（作業前に必ず読むこと）。
 
@@ -98,7 +98,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 単体テストは **410 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 175）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
-ONNX / OpenUTAU 書き出し（SVS のみ。実験的）:
+ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
     uv run python -m export.cli --ckpt log/<run>/ckpt_050000.pt --out export/<name> \
       --model-name <name> --variant diffsinger --hop 512 --speaker embed
@@ -228,6 +228,11 @@ fine-tune すると、未知 source の回復率が 69.4% → **75.3%**、signal
 （target 指定で 0.24 → 0.52）。**予測 mel の細部が 25% 欠けている**のが原因で、
 **base も fine-tune も `gan.enabled: false`**（flow 損失 + 再構成損失のみ）でした。
 step を増やすと細部と話者性が**同時に単調に**戻ることで因果を確認しています。
+- **M5 の測定はすべて NHVSing V3 で行いました。** 2026-09-13 に上流の
+**V3.1**（倍音のにじみと高域の縞を修正）を取り込み、config とツールの既定を
+`nhv_v3_1.onnx` へ切り替えましたが、**`out/m5/` の数値は V3 のものです**。
+上限（`*_vocoder_only.wav`）がボコーダーごと変わるので、**V3.1 で測り直した値と
+混ぜないこと**。混ぜるなら両系を同じボコーダーで測り直します。
 - **CSV の列名に説明を書くと、その列が引けなくなります。** `sheet.csv` のヘッダは
 `pair,clip,vote  # vote に A / B / tie を書く` で、`csv.DictReader` は 3 列目の名前を
 **説明ごと**受け取ります。`row["vote"]` は `None` になり、**26 票すべてが未記入と読まれ、

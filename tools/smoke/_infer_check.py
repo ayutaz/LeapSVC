@@ -61,7 +61,7 @@ else:
 assert np.isfinite(mel).all(), "mel に非有限値がある"
 assert mel.shape[0] == 128, mel.shape
 
-voc = load_vocoder(str(ROOT / "checkpoints" / "nhv_v3.onnx"))
+voc = load_vocoder(str(ROOT / "checkpoints" / "nhv_v3_1.onnx"))
 n = mel.shape[1]
 wav = mel_to_wav(voc, mel, logf0[:n], uv[:n].astype(np.float32))
 assert np.isfinite(wav).all(), "WAV に非有限値がある"

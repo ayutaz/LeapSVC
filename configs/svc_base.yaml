@@ -44,7 +44,7 @@ train:
   log_interval: 50
   eval_interval: 500
   eval_items: 3
-  vocoder: checkpoints/nhv_v3.onnx
+  vocoder: checkpoints/nhv_v3_1.onnx
   num_workers: 2
   pitch_aug: false
   balance_speakers: false

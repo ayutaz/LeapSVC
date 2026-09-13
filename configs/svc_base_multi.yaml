@@ -58,7 +58,7 @@ train:
   log_interval: 50
   eval_interval: 2000
   eval_items: 3
-  vocoder: checkpoints/nhv_v3.onnx
+  vocoder: checkpoints/nhv_v3_1.onnx
   num_workers: 4
   pitch_aug: false          # SVC では使えない。train.py が SystemExit する
   balance_speakers: true    # 長時間の話者が batch を支配しないようにする（M3 ゴール 1）

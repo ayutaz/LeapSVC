@@ -119,7 +119,7 @@ def main() -> int:
     ap.add_argument("--min-voiced", type=float, default=0.3,
                     help="有声率がこれ未満の clip は測らない（前処理本体と同じ扱い）")
     ap.add_argument("--device", default="cuda", help="RMVPE の device（推論のみ）")
-    ap.add_argument("--vocoder", default="checkpoints/nhv_v3.onnx")
+    ap.add_argument("--vocoder", default="checkpoints/nhv_v3_1.onnx")
     ap.add_argument("--save-wav", type=int, default=2, help="各セットで残す試聴用 WAV の数")
     a = ap.parse_args()
 

@@ -32,10 +32,8 @@ from tqdm import tqdm
 from dataset import FrameBasedBatchSampler, LeapSingerDataset, acoustic_collate_fn
 from infer import infer_mel, infer_svc_mel, load_vocoder, mel_to_wav
 from leapsinger.config import MelSpec
-from preprocess.phrase_cut import clip_pau_gain
-from leapsinger.models.acoustic import HarmonicAcousticModel, HarmonicAcousticModelMultiSpk
 from leapsinger.mel import pitch_warp_mel_torch
-from leapsinger.modules.harmonic_excitation import harmonic_wave
+from leapsinger.models.acoustic import HarmonicAcousticModel, HarmonicAcousticModelMultiSpk
 from leapsinger.models.svc import HarmonicSVCModel
 from leapsinger.modules.discriminators import (
     JCUMelDiscriminator,
@@ -44,7 +42,9 @@ from leapsinger.modules.discriminators import (
     g_adv_fm_jcu,
     laplacian_var_ratio,
 )
-from preprocess.vocab import Vocab, PAU_ID
+from leapsinger.modules.harmonic_excitation import harmonic_wave
+from preprocess.phrase_cut import clip_pau_gain
+from preprocess.vocab import PAU_ID, Vocab
 from svc_dataset import SVCFeatureDataset, svc_collate_fn
 
 matplotlib.use("Agg")

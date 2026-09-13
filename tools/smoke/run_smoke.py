@@ -56,7 +56,7 @@ def write_configs(work: Path, device: str) -> None:
     import yaml
     def load(name):
         return yaml.safe_load((ROOT / "configs" / name).read_text(encoding="utf-8"))
-    voc = str(ROOT / "checkpoints" / "nhv_v3.onnx")
+    voc = str(ROOT / "checkpoints" / "nhv_v3_1.onnx")
     fast = dict(save_interval=20, log_interval=5, eval_interval=20, eval_items=2,
                 num_workers=0, vocoder=voc)
 

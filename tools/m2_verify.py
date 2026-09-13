@@ -90,7 +90,7 @@ def main() -> int:
     mel_b = infer_svc_mel(model, item, num_steps=steps, device=a.device)
 
     sr, hop = int(cfg["sample_rate"]), int(cfg["hop"])
-    voc = load_vocoder(str(ROOT / "checkpoints" / "nhv_v3.onnx"))
+    voc = load_vocoder(str(ROOT / "checkpoints" / "nhv_v3_1.onnx"))
     wav_pred = mel_to_wav(voc, mel_a, item["f0_logf0"], item["uv"])
     wav_gt = mel_to_wav(voc, gt_mel, item["f0_logf0"], item["uv"])
     sf.write(out / "m2_pred.wav", wav_pred, sr)

@@ -83,7 +83,7 @@ def main() -> int:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--content-model", default="lengyue233/content-vec-best")
     ap.add_argument("--layer", type=int, default=12)
-    ap.add_argument("--vocoder", default="checkpoints/nhv_v3.onnx")
+    ap.add_argument("--vocoder", default="checkpoints/nhv_v3_1.onnx")
     a = ap.parse_args()
 
     import soundfile as sf
