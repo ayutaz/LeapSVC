@@ -234,7 +234,7 @@ guard rail の 4 つは**すべて source か target 録音を基準**にして�
 
 - 実音声の end-to-end pipeline が再現可能。
 - unseen-source / held-out-song で重大な内容崩壊がない。
-- Seed-VC baseline に対する blind preference を記録済み。**N=1 の非公式 test** として
+- **確認済み（2026-09-13）:** Seed-VC baseline に対する blind preference を記録済み。**26 ペア中 25 判定で Seed-VC 21 / LeapSVC 4 / 引き分け 1。** 以下は当初の設計。**N=1 の非公式 test** として
   実施し（2026-09-01 決定）、**N を併記する**。ラベルを隠し、順序を randomize し、
   **両システムの出力に同じ loudness 揃え**を当てる。**除外は技術的失敗のみ**（無音・NaN・
   長さ不一致）で、除外した clip は理由付きで残す。

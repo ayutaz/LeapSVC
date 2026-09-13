@@ -1500,3 +1500,52 @@ class BlindListenPageTests(unittest.TestCase):
             (root / "b__unseen1_source.wav").write_bytes(b"")
             with self.assertRaises(ValueError):
                 find_source(root, "unseen1")
+
+    def test_sheet_written_by_prepare_round_trips(self):
+        # **prepare が書くヘッダには説明が付く**（`vote  # vote に ...`）。列名をそのまま
+        # 引くと **全件が未記入**になり、票が丸ごと消える。実際に起きた。
+        import tempfile
+        from pathlib import Path
+
+        from tools.blind_test import SHEET_HEADER, read_sheet
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "sheet.csv"
+            p.write_text(SHEET_HEADER + "\npair00,unseen08,B\npair01,holdout00,tie\n",
+                         encoding="utf-8")
+            rows = read_sheet(p)
+            self.assertEqual([r["vote"] for r in rows], ["B", "tie"])
+            self.assertEqual([r["pair"] for r in rows], ["pair00", "pair01"])
+
+    def test_plain_vote_header_also_works(self):
+        import tempfile
+        from pathlib import Path
+
+        from tools.blind_test import read_sheet
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "sheet.csv"
+            p.write_text("pair,clip,vote\npair00,unseen08,A\n", encoding="utf-8")
+            self.assertEqual(read_sheet(p)[0]["vote"], "A")
+
+    def test_a_column_merely_containing_vote_is_not_the_vote_column(self):
+        # `note_vote` を票と読むと別の値が票になる。**黙って空を返すのも不可** ――
+        # 今回 26 票を失ったのがまさにその壊れ方なので、無ければ落とす。
+        import tempfile
+        from pathlib import Path
+
+        from tools.blind_test import read_sheet
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "sheet.csv"
+            p.write_text("pair,clip,note_vote\npair00,unseen08,A\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_sheet(p)
+
+    def test_missing_vote_column_is_refused(self):
+        import tempfile
+        from pathlib import Path
+
+        from tools.blind_test import read_sheet
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "sheet.csv"
+            p.write_text("pair,clip\npair00,unseen08\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                read_sheet(p)

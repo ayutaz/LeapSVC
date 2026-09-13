@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **406 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 171）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **410 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 175）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX / OpenUTAU 書き出し（SVS のみ。実験的）:
 
@@ -228,6 +228,12 @@ fine-tune すると、未知 source の回復率が 69.4% → **75.3%**、signal
 （target 指定で 0.24 → 0.52）。**予測 mel の細部が 25% 欠けている**のが原因で、
 **base も fine-tune も `gan.enabled: false`**（flow 損失 + 再構成損失のみ）でした。
 step を増やすと細部と話者性が**同時に単調に**戻ることで因果を確認しています。
+- **CSV の列名に説明を書くと、その列が引けなくなります。** `sheet.csv` のヘッダは
+`pair,clip,vote  # vote に A / B / tie を書く` で、`csv.DictReader` は 3 列目の名前を
+**説明ごと**受け取ります。`row["vote"]` は `None` になり、**26 票すべてが未記入と読まれ、
+例外も出ませんでした**（実際に踏みました）。`tools/blind_test.py` の `read_sheet()` は
+`vote` で**始まる**列を採り、無ければ落とします。**記入済みの入力を一度も通していない
+読み取りコードは、通るまで壊れているかどうか分かりません。**
 - **blind test の参照に上限を入れないこと。** 「正解の音」として
 `*_vocoder_only.wav` を聴かせたくなりますが、これは **LeapSVC 自身のボコーダー
 （NHVSing）の出力**なので、耳がその癖を覚えると **A / B のどちらが LeapSVC かを当てられます**。

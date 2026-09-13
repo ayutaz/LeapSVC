@@ -75,6 +75,37 @@ SHEET_HEADER = "pair,clip,vote  # vote に A / B / tie を書く"
 _VALID_VOTES = ("", "A", "B", "tie")
 
 
+def read_sheet(path):
+    """採点シートを読む。**列名の説明を落としてから引く。**
+
+    `prepare` が書くヘッダは `pair,clip,vote  # vote に A / B / tie を書く` です。
+    `csv.DictReader` は 3 列目の名前を**説明ごと**受け取るので、`row["vote"]` を引くと
+    **全件が未記入**になります。実際に 26 票を丸ごと落としました（集計が 0 勝 0 勝、
+    未記入 26 と出て気づきました）。**票が消えても例外にならない**のが厄介な点です。
+
+    `vote` で**始まる**列を票とみなします。`note_vote` のように途中に含むだけの列は
+    採りません（別の値が票になるため）。票の列が無ければ落とします。
+    """
+    import csv
+
+    rows = []
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        names = reader.fieldnames or []
+        vote_col = next((n for n in names if n.strip().lower().startswith("vote")), None)
+        if vote_col is None:
+            raise ValueError(f"{path}: vote 列がありません（見出し: {names}）")
+        pair_col = next((n for n in names if n.strip().lower().startswith("pair")), "pair")
+        clip_col = next((n for n in names if n.strip().lower().startswith("clip")), "clip")
+        for row in reader:
+            pair = (row.get(pair_col) or "").strip()
+            if not pair:
+                continue
+            rows.append({"pair": pair, "clip": (row.get(clip_col) or "").strip(),
+                         "vote": (row.get(vote_col) or "").strip()})
+    return rows
+
+
 def find_source(root, clip: str):
     """`<曲>__<clip>_source.wav` を 1 つだけ取る。
 
@@ -520,18 +551,15 @@ def _cmd_prepare(a) -> int:
 
 
 def _cmd_tally(a) -> int:
-    import csv
     import json
 
     key = {r["pair"]: r for r in json.loads(Path(a.key).read_text(encoding="utf-8"))}
     sheet = []
-    with open(a.sheet, encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            pair = (row.get("pair") or "").strip()
-            if not pair or pair not in key:
-                continue
-            sheet.append({"clip": key[pair]["clip"], "A": key[pair]["A"], "B": key[pair]["B"],
-                          "vote": (row.get("vote") or "").strip()})
+    for row in read_sheet(a.sheet):
+        if row["pair"] not in key:
+            continue
+        k = key[row["pair"]]
+        sheet.append({"clip": k["clip"], "A": k["A"], "B": k["B"], "vote": row["vote"]})
     if not sheet:
         sys.exit("採点シートに有効な行がありません")
 
@@ -551,15 +579,7 @@ def _cmd_tally(a) -> int:
 
 
 def _cmd_page(a) -> int:
-    import csv
-
-    rows = []
-    with open(a.sheet, encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            pair = (row.get("pair") or "").strip()
-            if pair:
-                rows.append({"pair": pair, "clip": (row.get("clip") or "").strip(),
-                             "vote": (row.get("vote") or "").strip()})
+    rows = read_sheet(a.sheet)
     out = Path(a.out) if a.out else Path(a.sheet).parent / "listen.html"
     root = out.parent
 

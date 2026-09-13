@@ -173,7 +173,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 
 ### 確認済み
 
-- 自動テスト **406 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 171）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **410 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 175）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **51 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。
@@ -372,7 +372,7 @@ ECAPA-TDNN に替え、12 秒以上のクリップで較正を通してから測
 LeapSVC 単独では、**信号品質は自分の上限とほぼ同等**（stoi −0.006）、**CER は上限から
 +0.168** 悪化。推論 RTF は GPU で合計 0.464、**うちボコーダーが 0.432**（93%）。
 
-**未実施:** ゴール 3 の blind listening test（評価者が聴く工程）。材料と聴取ページは `out/m5/blind/`（`listen.html` をブラウザで開いて投票し、書き出した `sheet.csv` を `tally` に渡す）。**参照は target 本人の録音と変換元のみ**で、上限は含めません （LeapSVC 自身のボコーダーの音なので系が割れるため）。
+**確認済み（2026-09-13）: ゴール 3 の blind listening test を実施しました。** 26 ペア、**25 判定中 21 が Seed-VC**（LeapSVC 4、引き分け 1、N=1 非公式）。差は**未知 source に集中**し（20 ペアで 2 対 18）、**hold-out では拮抗**します（6 ペアで 2 対 3・引き分け 1）。材料と聴取ページは `out/m5/blind/`。**参照は target 本人の録音と変換元のみ**で、上限は含めません（LeapSVC 自身のボコーダーの音なので系が割れるため）。
 
 **確認済み（2026-09-01）: 話者性が弱い原因は過平滑です。** 層ごとに切り分けた結果、
 ボコーダーと mel 表現は無罪（自己再構成で 96.4% 保つ）、source 話者の漏れも無し
@@ -403,7 +403,7 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
   （+12 にしても −28.2%）。**未実装**。
 - ~~CER・信号品質・timing・推論 RTF~~ — **測定済み（2026-09-01、M5）。** 各指標の限界は
   [評価計画](svc-evaluation.md) 4 節。`content_cos` は明瞭度の代理であって CER ではありません。
-- **主観的な品質差。** blind listening test が未実施なので、**自然さ・こもり・ノイズは
+- **主観的な品質の内訳。** blind preference は**どちらが良いか**しか記録しません。**何が悪いのか**（こもりかノイズか破綻か）は分解していません。以前の記述: **自然さ・こもり・ノイズは
   記録がありません**。客観指標が拾えない軸です。
 - **歌声に妥当な信号品質の指標。** SQUIM も DNSMOS も話し声で学習されており、**歌唱への
   妥当性は未検証**です。上限との差としてのみ使えます。

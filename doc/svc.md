@@ -106,7 +106,7 @@ guard rail は落ちたままです。
 | **M2 実音声 smoke** | **完了**。vast.ai で overfit し WAV を生成。F0 相関 0.9991、決定的モードで bit 再現。**完了レベル 3 に到達** |
 | **M3 multi-singer base** | **完了**。23 話者 / 約 18 時間を **60,000 step** 学習。**未知 source（VocalSet）の内容保持が学習済み歌手と同等**（下限からの回復率 85.7% 対 84.4%）。継続学習で eval/loss 0.02311 → **0.01459**、1 step と 16 step の乖離 10.8 → **6.0 点**。peak VRAM 2.0 GB |
 | **M4 target fine-tune** | **完了**。base から波音リツへ 20,000 step。**target らしさは上がり（話者類似度の回復率 45.1% → 54.9%、自己再構成は上限比 94.8% → 96.8%）、未知 source の内容保持は落ちます**（0.8599 → 0.8440）。事前登録した規則で **`ckpt_010000` を選択**（train loss だけなら 20,000 step を選んでいた）。peak VRAM 2.08 GB |
-| **M5 offline 品質ゲート** | **客観指標は測定完了、blind listening test だけ未実施**。**話者類似度で Seed-VC が上回り**（GAN 版で 0.4981 対 0.5912）、guard rail が落ちたため**「Seed-VC より良い」とは書けません**。**F0 追従・V/UV・timing は LeapSVC が上**。GAN fine-tune で未知 source の回復率は 69.4% → **75.3%**（Seed-VC 77.1%） |
+| **M5 offline 品質ゲート** | **完了**。客観指標 26 clip と blind preference 26 ペアを実施し、**完了レベル 4 に到達**。**blind は Seed-VC 選好**（25 判定中 21、引き分け 1、N=1 非公式）。**話者類似度でも Seed-VC が上回り**（GAN 版で 0.4981 対 0.5912）、guard rail が落ちたため**「Seed-VC より良い」とは書けません**。**F0 追従・V/UV・timing は LeapSVC が上**。**hold-out では拮抗**（6 ペアで 2 対 3・引き分け 1）、**差が出たのは未知 source**（20 ペアで 2 対 18） |
 | M6 streaming student | 未着手 |
 
 ## 完了レベル
@@ -114,5 +114,5 @@ guard rail は落ちたままです。
 1. **実装レベル** — モデル、loader、学習・評価・推論配線が存在する。**現在到達**。
 2. **合成 smoke レベル** — 人工テンソルで shape、padding、checkpoint、forward/inference を確認する。**現在到達**。
 3. **実データレベル** — 再現可能な前処理で実音声 shard を作り、学習して WAV を生成する。**現在到達**（2026-08-30、M2）。
-4. **品質比較レベル** — held-out song と未知 source singer で Seed-VC を含む blind comparison を**完了する**。**勝つことは条件ではありません**（品質を外部基準に対して言えるようになった状態を指します）。**未到達**（2026-09-01 時点で offline teacher・測定手段・判定規則は揃い、**比較そのものが未実施**）。
+4. **品質比較レベル** — held-out song と未知 source singer で Seed-VC を含む blind comparison を**完了する**。**勝つことは条件ではありません**（品質を外部基準に対して言えるようになった状態を指します）。**現在到達**（2026-09-13、M5）。客観指標 26 clip と **blind preference 26 ペア**を実施。**結果は Seed-VC 選好**（25 判定中 21、引き分け 1、p = 0.0009・参考値）で、**「Seed-VC より良い」とは書けません**。
 5. **リアルタイムレベル** — 実機で chunk 境界、RTF、lookahead、総遅延を測り、連続運転する。**未到達**。
