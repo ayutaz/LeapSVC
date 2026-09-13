@@ -1587,3 +1587,45 @@ class SpeakerSimilarityCollectionTests(unittest.TestCase):
     def test_missing_directory_yields_nothing(self):
         from tools.speaker_similarity import pick_clips
         self.assertEqual(pick_clips(None, n_clips=16), [])
+
+
+class TransposeResolutionTests(unittest.TestCase):
+    """clip ごとの移調をどこから取るか。**黙って 0 と仮定しない。**"""
+
+    def _clip(self, d, tag, transpose):
+        import json
+        from pathlib import Path
+        p = Path(d) / f"song__{tag}_convert.json"
+        p.write_text(json.dumps({"tag": tag, "transpose": transpose}), encoding="utf-8")
+
+    def test_transpose_comes_from_the_clip_manifest(self):
+        # 変換時に掛けた +12 を引かないと、**意図した移調が音程の誤りとして計上される**。
+        import tempfile
+
+        from tools.pitch_metrics import resolve_transposes
+        with tempfile.TemporaryDirectory() as d:
+            self._clip(d, "unseen00", 12)
+            self._clip(d, "holdout00", 0)
+            got = resolve_transposes(d)
+            self.assertEqual(got["unseen00"], 12.0)
+            self.assertEqual(got["holdout00"], 0.0)
+
+    def test_testset_overrides_the_clip_manifest(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from tools.pitch_metrics import resolve_transposes
+        with tempfile.TemporaryDirectory() as d:
+            self._clip(d, "unseen00", 12)
+            ts = Path(d) / "testset.json"
+            ts.write_text(json.dumps({"unseen": [{"transpose": 7}]}), encoding="utf-8")
+            self.assertEqual(resolve_transposes(d, testset=str(ts))["unseen00"], 7.0)
+
+    def test_no_manifest_yields_no_entry_not_a_silent_zero(self):
+        # 0 を返すと「移調なし」と区別が付かない。**入っていないこと自体を見せる。**
+        import tempfile
+
+        from tools.pitch_metrics import resolve_transposes
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(resolve_transposes(d), {})

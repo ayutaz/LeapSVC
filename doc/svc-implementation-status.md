@@ -174,7 +174,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 ### 確認済み
 
 - ボコーダーは **NHVSing V3.1**（`checkpoints/nhv_v3_1.onnx`。2026-09-13 に上流から取り込み）。**M5 の測定値は V3 で取ったもの**なので、V3.1 で測り直した値と混ぜないこと。
-- 自動テスト **414 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 179）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **417 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 182）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **51 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。
@@ -404,7 +404,7 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
   （+12 にしても −28.2%）。**未実装**。
 - ~~CER・信号品質・timing・推論 RTF~~ — **測定済み（2026-09-01、M5）。** 各指標の限界は
   [評価計画](svc-evaluation.md) 4 節。`content_cos` は明瞭度の代理であって CER ではありません。
-- **主観的な品質の内訳。** blind preference は**どちらが良いか**しか記録しません。**何が悪いのか**（こもりかノイズか破綻か）は分解していません。以前の記述: **自然さ・こもり・ノイズは
+- **主観的な品質の内訳。** blind preference は**どちらが良いか**しか記録しません。**何が悪いのか**（こもりかノイズか破綻か）は分解していません。**比較できる客観指標はすべて同等か LeapSVC が上**なので（2026-09-13 に subset 別で確認）、**差は測っていない軸にあります**。failure taxonomy の timbre は上限基準で Seed-VC には当たらないため、本数を系間で比べられません。以前の記述: **自然さ・こもり・ノイズは
   記録がありません**。客観指標が拾えない軸です。
 - **歌声に妥当な信号品質の指標。** SQUIM も DNSMOS も話し声で学習されており、**歌唱への
   妥当性は未検証**です。上限との差としてのみ使えます。

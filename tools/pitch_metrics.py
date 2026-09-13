@@ -61,6 +61,36 @@ def pitch_report(source: tuple[np.ndarray, np.ndarray],
     return out
 
 
+def resolve_transposes(directory, testset=None) -> dict[str, float]:
+    """clip ごとの移調（半音）を集める。**黙って 0 と仮定しません。**
+
+    変換時に掛けた移調を引かずに比べると、**意図した +12 が「音程の誤り」として計上
+    されます**（実測で 26 clip 中 11 本が 11.997 半音ずれていると出ました。男声 source →
+    女声 target に必要な移調そのものです）。中央値で集計していたため headline は 0.02 の
+    まま見え、**11 本が隠れていました**。
+
+    優先順位は testset の記録 > clip 自身の `*_convert.json`。どちらも無い clip は
+    **辞書に入れません** ―― 0 を返すと「移調なし」と区別が付かないためです。
+    """
+    import json as _json
+
+    tp: dict[str, float] = {}
+    for p in sorted(Path(directory).glob("*_convert.json")):
+        try:
+            c = _json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        tag = str(c.get("tag") or p.name.split("__")[-1].replace("_convert.json", ""))
+        if "transpose" in c:
+            tp[tag] = float(c["transpose"])
+    if testset:
+        ts = _json.loads(Path(testset).read_text(encoding="utf-8"))
+        for kind in ("unseen", "holdout"):
+            for i, c in enumerate(ts.get(kind, [])):
+                tp[f"{kind}{i:02d}"] = float(c.get("transpose", 0.0))
+    return tp
+
+
 def main() -> int:
     import argparse
     import json
@@ -81,12 +111,9 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
-    tp_of: dict[str, float] = {}
-    if a.testset:
-        ts = json.loads(Path(a.testset).read_text(encoding="utf-8"))
-        for kind in ("unseen", "holdout"):
-            for i, c in enumerate(ts[kind]):
-                tp_of[f"{kind}{i:02d}"] = float(c.get("transpose", 0.0))
+    tp_of = resolve_transposes(a.dir, testset=a.testset)
+    n_nonzero = sum(1 for v in tp_of.values() if v)
+    print(f"[transpose] {len(tp_of)} clip 分を取得（うち移調ありは {n_nonzero} 本）")
 
     mel = MelSpec()
     f0x = RmvpeF0(device=a.device)
@@ -108,6 +135,7 @@ def main() -> int:
         r = pitch_report(f0_of(src), f0_of(cnv), transpose=tp_of.get(tag, 0.0))
         r["file"] = stem
         r["tag"] = tag
+        r["transpose_known"] = tag in tp_of      # 0 と「記録が無い」を区別する
         rows.append(r)
         semi = "n/a" if r["median_abs_semitones"] is None else f"{r['median_abs_semitones']:5.2f}"
         corr = "n/a" if r["f0_corr"] is None else f"{r['f0_corr']:.4f}"
