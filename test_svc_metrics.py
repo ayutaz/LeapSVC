@@ -1549,3 +1549,41 @@ class BlindListenPageTests(unittest.TestCase):
             p.write_text("pair,clip\npair00,unseen08\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 read_sheet(p)
+
+
+class SpeakerSimilarityCollectionTests(unittest.TestCase):
+    """どの WAV を「変換結果」として数えるか。**ここを間違えると別種のファイルを比べる。**"""
+
+    def _dir(self, names):
+        import tempfile
+        from pathlib import Path
+        d = tempfile.mkdtemp()
+        for n in names:
+            (Path(d) / n).write_bytes(b"")
+        return Path(d)
+
+    def test_ceiling_files_are_excluded(self):
+        # `_vocoder_only` は **GT mel をボコーダーに通した上限**。変換結果として数えると
+        # 自系だけが上限で嵩上げされ、baseline と別種のファイルを比べることになる。
+        from tools.speaker_similarity import pick_clips
+        d = self._dir(["a__c0_converted.wav", "a__c0_vocoder_only.wav",
+                       "a__c0_source.wav", "b__c1_converted.wav"])
+        got = sorted(p.name for p in pick_clips(d, n_clips=99))
+        self.assertEqual(got, ["a__c0_converted.wav", "b__c1_converted.wav"])
+
+    def test_plain_reference_directory_is_untouched(self):
+        # target / unrelated は生の録音なので、名前で落とさないこと。
+        from tools.speaker_similarity import pick_clips
+        d = self._dir(["song_a.wav", "song_b.wav"])
+        self.assertEqual(len(pick_clips(d, n_clips=99)), 2)
+
+    def test_truncation_is_reported_not_silent(self):
+        # **黙って 16 本に切ると、指標がフラグ次第で変わる。**
+        from tools.speaker_similarity import pick_clips
+        d = self._dir([f"s__c{i}_converted.wav" for i in range(20)])
+        picked, avail = pick_clips(d, n_clips=16, with_count=True)
+        self.assertEqual((len(picked), avail), (16, 20))
+
+    def test_missing_directory_yields_nothing(self):
+        from tools.speaker_similarity import pick_clips
+        self.assertEqual(pick_clips(None, n_clips=16), [])

@@ -222,6 +222,31 @@ def _load(paths: Sequence[Path], sr: int, seconds: float) -> list[np.ndarray]:
     return out
 
 
+# 変換結果のディレクトリに並ぶ、**変換結果ではない** WAV。
+# `_source` は入力、`_vocoder_only` は GT mel をボコーダーに通した**上限**。
+_NOT_A_CONVERSION = ("_source", "_vocoder_only")
+
+
+def pick_clips(root, *, n_clips: int, with_count: bool = False):
+    """話者類似度に使う WAV を選ぶ。
+
+    **上限（`_vocoder_only`）を変換結果として数えないこと。** `--self-check` を付けて
+    変換すると、1 clip につき `_converted` `_source` `_vocoder_only` が並びます。
+    `_source` だけを除いていたため、**変換結果 13 本と上限 13 本を混ぜて**平均していました
+    （実測で発覚）。上限は target の GT mel をボコーダーに通したものなので target に
+    そっくりで、**自系だけが嵩上げされます**。baseline 側のディレクトリには上限が無いので、
+    **別種のファイルを比べる**ことになります。
+
+    切り詰めは黙って行いません。`with_count=True` で**あった本数**も返すので、
+    `n_clips` で切れたかどうかを report に残せます（指標がフラグ次第で変わるため）。
+    """
+    if not root:
+        return ([], 0) if with_count else []
+    ps = [p for p in sorted(Path(root).rglob("*.wav"))
+          if not any(s in p.name for s in _NOT_A_CONVERSION)]
+    return (ps[:n_clips], len(ps)) if with_count else ps[:n_clips]
+
+
 def main() -> int:
     import argparse
     import json
@@ -243,14 +268,21 @@ def main() -> int:
                     help="0 にすると較正外の長さでも測る（読めない値になる点に注意）")
     a = ap.parse_args()
 
-    def pick(root: str | None) -> list[Path]:
-        if not root:
-            return []
-        # 変換結果のディレクトリには source も混ざるので除く
-        ps = [p for p in sorted(Path(root).rglob("*.wav")) if "_source" not in p.name]
-        return ps[:a.n_clips]
+    counts = {}
 
-    conv_p, ref_p, other_p = pick(a.converted), pick(a.target), pick(a.unrelated)
+    def pick(root: str | None, name: str) -> list[Path]:
+        ps, avail = pick_clips(root, n_clips=a.n_clips, with_count=True)
+        counts[name] = {"used": len(ps), "available": avail,
+                        "truncated": avail > len(ps)}
+        return ps
+
+    conv_p = pick(a.converted, "converted")
+    ref_p = pick(a.target, "target")
+    other_p = pick(a.unrelated, "unrelated")
+    for name, c in counts.items():
+        if c["truncated"]:
+            print(f"[note] {name}: {c['available']} 本のうち {c['used']} 本だけ使います"
+                  f"（--n-clips {a.n_clips}）")
     if not conv_p or not ref_p:
         sys.exit(f"WAV が足りません: converted {len(conv_p)} / target {len(ref_p)}")
     if a.encoder == "ecapa":
@@ -260,6 +292,7 @@ def main() -> int:
     rep = similarity_report(_load(conv_p, 16000, a.seconds), _load(ref_p, 16000, a.seconds),
                             _load(other_p, 16000, a.seconds), embed=enc, sr=16000,
                             min_seconds=a.min_seconds)
+    rep["counts"] = counts          # 切れたかどうかを残す（指標がフラグ次第で変わるため）
     rep["manifest"] = enc.manifest()
     rep["files"] = {"converted": [str(p) for p in conv_p], "target": [str(p) for p in ref_p],
                     "unrelated": [str(p) for p in other_p]}
