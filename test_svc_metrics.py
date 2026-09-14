@@ -1551,6 +1551,84 @@ class BlindListenPageTests(unittest.TestCase):
                 read_sheet(p)
 
 
+class BlindSimilarityPageTests(unittest.TestCase):
+    """**質問が違えば別の test です。** preference の票が混ざらないことが最優先の契約。"""
+
+    ROWS = [{"pair": "pair00", "clip": "unseen08"},
+            {"pair": "pair01", "clip": "holdout00"}]
+    REF = [{"label": "target 本人（波音リツ）", "path": "context/target_ref.wav"}]
+
+    def test_the_similarity_question_asks_about_the_target(self):
+        # ①の質問は「どちらが target 本人に似ているか」1 つだけ。
+        from tools.blind_test import listen_page
+        html = listen_page(self.ROWS, question="similarity", references=self.REF)
+        self.assertIn("似て", html)
+        self.assertIn("波音リツ", html)
+
+    def test_the_similarity_question_does_not_ask_which_is_better(self):
+        # 良し悪し・自然さを一緒に聞くと、**前回と同じ交絡（明るさ）**が入る。
+        from tools.blind_test import listen_page
+        html = listen_page(self.ROWS, question="similarity", references=self.REF)
+        self.assertNotIn("自然さ", html)
+        self.assertNotIn("どちらが良い", html)
+
+    def test_the_similarity_page_requires_a_target_reference(self):
+        # 「似ている」は基準が無ければ判断できない。**黙って基準なしで聴かせない。**
+        from tools.blind_test import listen_page
+        with self.assertRaises(ValueError):
+            listen_page(self.ROWS, question="similarity")
+
+    def test_the_two_questions_do_not_share_vote_storage(self):
+        # **同じ localStorage を使うと、前回の preference の票が黙って埋まります。**
+        # 例外は出ず、「もう答えてある」ように見えるのが壊れ方。
+        import re
+
+        from tools.blind_test import listen_page
+        pref = listen_page(self.ROWS)
+        sim = listen_page(self.ROWS, question="similarity", references=self.REF)
+        key = re.compile(r'KEY\s*=\s*"([^"]+)"')
+        self.assertIsNotNone(key.search(pref))
+        self.assertIsNotNone(key.search(sim))
+        self.assertNotEqual(key.search(pref).group(1), key.search(sim).group(1))
+
+    def test_preference_is_still_the_default(self):
+        # M5 のページを再現できること（既定を変えると過去の成果物が作り直せない）。
+        from tools.blind_test import listen_page
+        self.assertEqual(listen_page(self.ROWS),
+                         listen_page(self.ROWS, question="preference"))
+
+    def test_an_unknown_question_is_refused(self):
+        # 黙って preference に落ちると、**別の質問を聞いたつもりの票**が貯まる。
+        from tools.blind_test import listen_page
+        with self.assertRaises(ValueError):
+            listen_page(self.ROWS, question="なんとなく", references=self.REF)
+
+    def test_the_page_names_the_sheet_it_writes(self):
+        # 書き出し先が固定だと、**preference の sheet.csv を上書き**してしまう。
+        from tools.blind_test import listen_page
+        html = listen_page(self.ROWS, question="similarity", references=self.REF,
+                           sheet_path="out/m5/blind_sim/sheet.csv")
+        self.assertIn("out/m5/blind_sim/sheet.csv", html)
+
+    def test_system_names_never_reach_the_similarity_page(self):
+        from tools.blind_test import listen_page
+        html = listen_page(self.ROWS, question="similarity", references=self.REF).lower()
+        for name in ("leapsvc", "seedvc", "seed-vc"):
+            self.assertNotIn(name, html)
+
+    def test_tally_records_which_question_was_asked(self):
+        # 質問を書かない result.json は、2 つ並ぶと**どちらの結果か分からなくなります**。
+        from tools.blind_test import tally
+        sheet = [{"pair": "pair00", "clip": "c0", "vote": "A", "A": "x", "B": "y"}]
+        self.assertEqual(tally(sheet, question="similarity")["question"], "similarity")
+
+    def test_tally_does_not_invent_a_question(self):
+        # 「記録が無い」と「preference だった」を混同しないこと。
+        from tools.blind_test import tally
+        sheet = [{"pair": "pair00", "clip": "c0", "vote": "A", "A": "x", "B": "y"}]
+        self.assertIsNone(tally(sheet)["question"])
+
+
 class SpeakerSimilarityCollectionTests(unittest.TestCase):
     """どの WAV を「変換結果」として数えるか。**ここを間違えると別種のファイルを比べる。**"""
 

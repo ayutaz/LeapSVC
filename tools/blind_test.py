@@ -146,8 +146,57 @@ def _check_path(path: str, what: str) -> str:
     return p
 
 
-def listen_page(rows: Sequence[dict], *, title: str = "blind preference test",
-                references: Sequence[dict] = ()) -> str:
+# **質問が違えば別の test です。** 何を聞いたかを記録しないと、result.json が 2 つ並んだ
+# ときにどちらの結果か分からなくなります。票の保存先も質問ごとに分けます ――
+# 同じ localStorage を使うと、**前の質問の票が黙って埋まります**（例外は出ません）。
+QUESTIONS: dict[str, dict[str, Any]] = {
+    "preference": {
+        "title": "blind preference test",
+        "lead": "同じ 1 本の歌を、2 つの系がそれぞれ変換した結果です。"
+                "どちらがどの系かは表示されません。",
+        "note": ('<b>「target に似ているか」では選びません。</b>'
+                 '話者類似度は客観指標で測り終わっています。ここで聴くのは'
+                 '<b>指標が拾えないもの</b>です'
+                 '―― <b>自然さ</b>（声として不自然でないか）、<b>こもり / ざらつき</b>'
+                 '（高域の欠落、ノイズ、金属的な響き）、<b>歌としての破綻</b>'
+                 '（音程の揺れ、子音の消失、途切れ）。<br>'
+                 '<b>引き分けは空欄ではなく tie。</b> 集計が区別します'
+                 '（差が無かったこと自体が結果です）。'
+                 '<code>key.json</code> は集計まで開かないでください。'),
+        # **2026-09-14 に「A が近い」から直しました。** 警告文が「似ているかでは選ばない」
+        # と言っているのにボタンが「近い」で、指している軸が食い違っていました。
+        # M5 で実際に表示したページは `out/m5/blind/listen.html` に残っています。
+        "vote_a": "A が良い", "vote_b": "B が良い",
+        "storage": "leapsinger-blind-votes",
+        "sheet": "out/m5/blind/sheet.csv",
+        "needs_target_ref": False,
+    },
+    "similarity": {
+        "title": "blind similarity test",
+        "lead": "同じ 1 本の歌を、2 つの系がそれぞれ変換した結果です。"
+                "どちらがどの系かは表示されません。",
+        "note": ('<b>聞くのは「似ているか」だけです。</b> 上の'
+                 '<b>参照（target 本人の録音）</b>を基準に、'
+                 '<b>声の持ち主として同じ人に聞こえるほう</b>を選んでください。<br>'
+                 '<b>うまさ・きれいさ・聴きやすさでは選ばないでください</b> ―― '
+                 'それは別の質問で、すでに聴き終わっています。'
+                 '迷ったら<b>声色・声の太さ・その人らしい癖</b>で。<br>'
+                 '<b>引き分けは空欄ではなく tie。</b> 集計が区別します'
+                 '（差が無かったこと自体が結果です）。'
+                 '<code>key.json</code> は集計まで開かないでください。'),
+        "vote_a": "A が似ている", "vote_b": "B が似ている",
+        # **preference と別の名前空間。** 同じにすると前回の票が復元されます。
+        "storage": "leapsinger-blind-votes-similarity",
+        "sheet": "out/m5/blind_sim/sheet.csv",
+        # 「似ている」は基準が無ければ判断できない。**黙って基準なしで聴かせない。**
+        "needs_target_ref": True,
+    },
+}
+
+
+def listen_page(rows: Sequence[dict], *, title: str | None = None,
+                references: Sequence[dict] = (), question: str = "preference",
+                sheet_path: str | None = None) -> str:
     """ブラウザで聴いて投票するページを組み立てる（`out/m5/blind/listen.html`）。
 
     **key.json の行を渡すと落とします。** key には `A` / `B` に system 名が入っており、
@@ -162,6 +211,11 @@ def listen_page(rows: Sequence[dict], *, title: str = "blind preference test",
     """
     import json
 
+    if question not in QUESTIONS:
+        raise ValueError(f"知らない質問です（{question!r}）。"
+                         f"{sorted(QUESTIONS)} のいずれか。**黙って preference に落とすと、"
+                         "別の質問を聞いたつもりの票が貯まります**")
+    q = QUESTIONS[question]
     rows = list(rows)
     if not rows:
         raise ValueError("行がありません")
@@ -185,9 +239,20 @@ def listen_page(rows: Sequence[dict], *, title: str = "blind preference test",
 
     refs = [{"label": str(x["label"]), "path": _check_path(x["path"], "参照")}
             for x in references]
+    if q["needs_target_ref"] and not refs:
+        raise ValueError(
+            f"{question}: 参照（target 本人の録音）がありません。"
+            "「似ているか」は基準が無ければ判断できないので、基準なしでは聴かせません")
 
     data = json.dumps(clean, ensure_ascii=False, indent=1)
-    return _PAGE_TEMPLATE.replace("__TITLE__", title) \
+    return _PAGE_TEMPLATE.replace("__TITLE__", title or q["title"]) \
+                         .replace("__H1__", q["title"]) \
+                         .replace("__LEAD__", q["lead"]) \
+                         .replace("__NOTE__", q["note"]) \
+                         .replace("__VOTE_A__", q["vote_a"]) \
+                         .replace("__VOTE_B__", q["vote_b"]) \
+                         .replace("__SHEET__", sheet_path or q["sheet"]) \
+                         .replace("__STORAGE__", json.dumps(q["storage"])) \
                          .replace("__HEADER__", json.dumps(SHEET_HEADER, ensure_ascii=False)) \
                          .replace("__REFS__", json.dumps(refs, ensure_ascii=False, indent=1)) \
                          .replace("__ROWS__", data)
@@ -237,15 +302,10 @@ _PAGE_TEMPLATE = r"""<!doctype html>
  kbd{background:#232830;border:1px solid var(--line);border-radius:4px;padding:1px 6px;
      font:12px ui-monospace,Consolas,monospace}
 </style></head><body><div class="wrap">
-<h1>blind preference test</h1>
-<p class="sub">同じ 1 本の歌を、2 つの系がそれぞれ変換した結果です。どちらがどの系かは表示されません。</p>
+<h1>__H1__</h1>
+<p class="sub">__LEAD__</p>
 
-<div class="warn"><b>「target に似ているか」では選びません。</b>
-話者類似度は客観指標で測り終わっています。ここで聴くのは<b>指標が拾えないもの</b>です
-―― <b>自然さ</b>（声として不自然でないか）、<b>こもり / ざらつき</b>（高域の欠落、ノイズ、
-金属的な響き）、<b>歌としての破綻</b>（音程の揺れ、子音の消失、途切れ）。<br>
-<b>引き分けは空欄ではなく tie。</b> 集計が区別します（差が無かったこと自体が結果です）。
-<code>key.json</code> は集計まで開かないでください。</div>
+<div class="warn">__NOTE__</div>
 
 <div id="ctx"></div>
 
@@ -262,8 +322,8 @@ _PAGE_TEMPLATE = r"""<!doctype html>
   <button id="stop">停止 <span style="color:var(--dim)">(0)</span></button>
  </div>
  <div class="row">
-  <button class="vote" data-v="A">A が近い <span style="color:var(--dim)">(A)</span></button>
-  <button class="vote" data-v="B">B が近い <span style="color:var(--dim)">(B)</span></button>
+  <button class="vote" data-v="A">__VOTE_A__ <span style="color:var(--dim)">(A)</span></button>
+  <button class="vote" data-v="B">__VOTE_B__ <span style="color:var(--dim)">(B)</span></button>
   <button class="vote tie" data-v="tie">引き分け <span style="color:var(--dim)">(T)</span></button>
  </div>
  <div class="nav">
@@ -279,7 +339,7 @@ _PAGE_TEMPLATE = r"""<!doctype html>
 <div class="grid" id="grid"></div>
 
 <h2 style="font-size:16px;margin:28px 0 6px">書き出し</h2>
-<p class="sub" style="margin:0 0 10px">全部埋めたら、この内容を <code>out/m5/blind/sheet.csv</code> へ上書きします。</p>
+<p class="sub" style="margin:0 0 10px">全部埋めたら、この内容を <code>__SHEET__</code> へ上書きします。</p>
 <div class="row" style="margin-top:0">
  <button id="dl">sheet.csv をダウンロード</button>
  <button id="copy">クリップボードへコピー</button>
@@ -292,7 +352,7 @@ _PAGE_TEMPLATE = r"""<!doctype html>
 const ROWS = __ROWS__;
 const REFS = __REFS__;
 const HEADER = __HEADER__;
-const KEY = "leapsinger-blind-votes";
+const KEY = __STORAGE__;
 const au = document.getElementById("au");
 let i = 0, votes = {};
 try { votes = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { votes = {}; }
@@ -465,12 +525,18 @@ def _p_sign_test(wins: int, n: int) -> float:
     return min(1.0, 2.0 * tail)
 
 
-def tally(sheet: Sequence[dict[str, Any]]) -> dict[str, Any]:
+def tally(sheet: Sequence[dict[str, Any]], *,
+          question: str | None = None) -> dict[str, Any]:
     """採点シートを system ごとの勝ち数へ直す。
 
     **side ではなく system で数えます**（A が常に同じ system とは限らないため）。
     **引き分けと未記入も数えます。**
+
+    `question` は**何を聞いたか**です。**既定は None（記録が無い）で、preference を
+    仮定しません** ―― result.json が 2 つ並んだときに取り違えるためです。
     """
+    if question is not None and question not in QUESTIONS:
+        raise ValueError(f"知らない質問です（{question!r}）。{sorted(QUESTIONS)} のいずれか")
     wins: dict[str, int] = {}
     ties = missing = 0
     for row in sheet:
@@ -494,6 +560,7 @@ def tally(sheet: Sequence[dict[str, Any]]) -> dict[str, Any]:
         wins.setdefault(n, 0)
     top = max(wins.values()) if wins else 0
     return {
+        "question": question,
         "wins": wins, "ties": ties, "n_missing": missing,
         "n_voted": decisive + ties, "n_decisive": decisive,
         "p_two_sided": _p_sign_test(top, decisive),
@@ -563,9 +630,11 @@ def _cmd_tally(a) -> int:
     if not sheet:
         sys.exit("採点シートに有効な行がありません")
 
-    rep = tally(sheet)
+    rep = tally(sheet, question=getattr(a, "question", None))
     rep["rows"] = sheet
-    print("=== blind preference（N=1、非公式）===")
+    # **何を聞いたかを見出しに出す。** preference と similarity の結果は別物なので、
+    # 出力を眺めただけで取り違えないようにする。
+    print(f"=== blind {rep['question'] or '質問の記録なし'}（N=1、非公式）===")
     for name, w in sorted(rep["wins"].items(), key=lambda kv: -kv[1]):
         print(f"  {name:10s} {w:3d} 勝")
     print(f"  引き分け {rep['ties']} / 未記入 {rep['n_missing']} / 判定 {rep['n_decisive']}")
@@ -885,8 +954,13 @@ def _cmd_page(a) -> int:
                 found += 1
             print(f"[blind] 変換元 {found} / {len(rows)} 本を context/ へ")
 
-    out.write_text(listen_page(rows, references=refs), encoding="utf-8")
-    print(f"[blind] {len(rows)} ペア -> {out}")
+    if QUESTIONS[a.question]["needs_target_ref"] and not refs:
+        sys.exit(f"--question {a.question} には --target-ref が要ります。"
+                 "「似ているか」は基準が無ければ判断できません")
+    out.write_text(listen_page(rows, references=refs, question=a.question,
+                               sheet_path=str(a.sheet).replace(chr(92), "/")),
+                   encoding="utf-8")
+    print(f"[blind] {len(rows)} ペア -> {out} （質問: {a.question}）")
     print("  ブラウザで開いて投票し、書き出した sheet.csv で上書きしてから tally を回します")
     return 0
 
@@ -939,6 +1013,8 @@ def main() -> int:
     p2.add_argument("--sheet", required=True)
     p2.add_argument("--key", required=True)
     p2.add_argument("--out", default=None)
+    p2.add_argument("--question", default=None, choices=sorted(QUESTIONS),
+                    help="**何を聞いたか。** 省くと result.json に記録が残りません")
     p2.set_defaults(func=_cmd_tally)
 
     p3 = sub.add_parser("page", help="ブラウザで聴いて投票するページを作る")
@@ -949,6 +1025,8 @@ def main() -> int:
     p3.add_argument("--target-label", default="target 本人の録音")
     p3.add_argument("--source-dir", default=None,
                     help="`<曲>__<clip>_source.wav` が並ぶディレクトリ（変換元。両系で同一）")
+    p3.add_argument("--question", default="preference", choices=sorted(QUESTIONS),
+                    help="**質問が違えば別の test です。** 票の保存先も分かれます")
     p3.set_defaults(func=_cmd_page)
 
     p4 = sub.add_parser("page-defects", help="劣ったほうの欠点を名付けるページを作る")
