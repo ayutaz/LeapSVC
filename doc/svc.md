@@ -53,7 +53,7 @@ M5 の客観指標も測定しました（26 clip を両システムで変換）
 |---|---|
 | 製品目標 | zero-shot 万能モデルではなく、追加学習可能な target-singer SVC |
 | 最初の品質目標 | まず offline teacher を完成させ、Seed-VC と比較する |
-| streaming | offline 品質ゲート通過後に causal / limited-lookahead student を蒸留する |
+| streaming | offline 品質ゲート通過後に causal / limited-lookahead student を蒸留する。**2026-09-14 に直列経路から外しました** — **must ではなく、品質が十分になってから**（[起動条件](svc-plan.md#m6-streaming-student)） |
 | 既存 SVS | 削除せず、`model.arch: svc` の別経路として維持する |
 | content encoder | **ContentVec**（`lengyue233/content-vec-best`、MIT、768 次元 layer 12）を凍結して使う。学習は 768 から固定ランダムに選んだ **256 次元**を既定とする（[根拠](svc-content-encoder.md)） |
 | pitch | **RMVPE に固定**して source F0 と V/UV を抽出する |
@@ -90,10 +90,15 @@ guard rail は落ちたままです。
 **どちらが良いか**を聞いており、**明るさの差に交絡**していました。**target 忠実を採ると
 決めた**以上、「どちらが target 本人に似ているか」を別の質問として測るのが筋です。
 **GPU 不要**で、材料は `out/m5/blind/` にそろっています（[実行計画](svc-plan.md#2b-ここからの計画) の①）。
-- **M6 をどう始めるか**（**要ユーザー判断**）。GPU の end-to-end RTF 0.464 のうち
-**ボコーダーが 93%**（0.432）で acoustic は 0.006 です。**蒸留は lookahead に効き、RTF には
-効きません。** 最初の作業はボコーダーの実行経路の測定になります
-（[実行計画](svc-plan.md#2b-ここからの計画) の④）。
+- ~~M6 をどう始めるか~~ — **決着（2026-09-14）。直列経路から外しました。** must ではなく、
+**品質が十分になってから**着手します。起動条件は「同一 test set の blind comparison で
+preference が baseline を上回り、guard rail を 1 つも落としていない」こと
+（[実行計画](svc-plan.md#m6-streaming-student)）。着手すると決めたときの**最初の作業は蒸留では
+なくボコーダーの実行経路の測定**です（GPU の end-to-end RTF 0.464 のうち**ボコーダーが 93%**）。
+- **外部 baseline を Seed-VC 以外へ広げるか**（**要ユーザー判断**）。品質の到達点を外部基準で
+言うなら 1 系では足りません。候補は RVC / So-VITS-SVC / Beatrice で、**Beatrice は同じ手元で
+動いています**。**「SOTA」は目標としては明確ですが、文書には軸と比較対象と test set を明示した
+記述として書きます**（[主張ルール](svc-prior-art-license.md) 6 節）。
 - **CER の +0.168 を分解するか。** 上限 0.028 に対し変換 0.197 で、**追跡している指標の中で
 最大の劣化**ですが、原因を content 側（256 次元・整列）と音響側に分けていません
 （[実行計画](svc-plan.md#2b-ここからの計画) の③）。
@@ -120,7 +125,7 @@ guard rail は落ちたままです。
 | **M3 multi-singer base** | **完了**。23 話者 / 約 18 時間を **60,000 step** 学習。**未知 source（VocalSet）の内容保持が学習済み歌手と同等**（下限からの回復率 85.7% 対 84.4%）。継続学習で eval/loss 0.02311 → **0.01459**、1 step と 16 step の乖離 10.8 → **6.0 点**。peak VRAM 2.0 GB |
 | **M4 target fine-tune** | **完了**。base から波音リツへ 20,000 step。**target らしさは上がり（話者類似度の回復率 45.1% → 54.9%、自己再構成は上限比 94.8% → 96.8%）、未知 source の内容保持は落ちます**（0.8599 → 0.8440）。事前登録した規則で **`ckpt_010000` を選択**（train loss だけなら 20,000 step を選んでいた）。peak VRAM 2.08 GB |
 | **M5 offline 品質ゲート** | **完了**。客観指標 26 clip と blind preference 26 ペアを実施し、**完了レベル 4 に到達**。**blind は Seed-VC 選好**（25 判定中 21、引き分け 1、N=1 非公式）。**話者類似度はほぼ同等**（訂正後 0.5899 対 0.5912。旧 0.4981 は上限混入による測定誤り）。**blind preference で負けているため「Seed-VC より良い」とは書けません**。**F0 追従・V/UV・timing は LeapSVC が上**。**hold-out では拮抗**（6 ペアで 2 対 3・引き分け 1）、**差が出たのは未知 source**（20 ペアで 2 対 18） |
-| M6 streaming student | **未着手**。**前提が 1 つ変わりました** — GPU の end-to-end RTF の **93% がボコーダー**（0.432 / 0.464）で acoustic は 0.006。**蒸留は lookahead に効き、RTF には効きません。** 最初の作業はボコーダーの実行経路の測定です |
+| M6 streaming student | **未着手・条件付き**。**2026-09-14 に直列経路から外しました**（must ではない）。着手するときの最初の作業は蒸留ではなく**ボコーダーの実行経路の測定**です — GPU の end-to-end RTF の **93% がボコーダー**（0.432 / 0.464）、acoustic は 0.006 で、**蒸留は lookahead に効き RTF には効きません** |
 
 **決定（2026-09-13）: 明るさは target 忠実を採ります。** blind の選好は明るさの差
 （Seed-VC は target 本人の録音より 1.85 倍明るい）で動いていました。**明るくすれば選好は
@@ -134,4 +139,4 @@ guard rail は落ちたままです。
 2. **合成 smoke レベル** — 人工テンソルで shape、padding、checkpoint、forward/inference を確認する。**現在到達**。
 3. **実データレベル** — 再現可能な前処理で実音声 shard を作り、学習して WAV を生成する。**現在到達**（2026-08-30、M2）。
 4. **品質比較レベル** — held-out song と未知 source singer で Seed-VC を含む blind comparison を**完了する**。**勝つことは条件ではありません**（品質を外部基準に対して言えるようになった状態を指します）。**現在到達**（2026-09-13、M5）。客観指標 26 clip と **blind preference 26 ペア**を実施。**結果は Seed-VC 選好**（25 判定中 21、引き分け 1、p = 0.0009・参考値）で、**「Seed-VC より良い」とは書けません**。
-5. **リアルタイムレベル** — 実機で chunk 境界、RTF、lookahead、総遅延を測り、連続運転する。**未到達**。**段ごとの RTF は測定済み**（M5）ですが、chunk 境界・audio I/O・連続運転は未測定です。`realtime_capable` は `rtf_total < 1` を見ているだけなので、これを根拠にしません。
+5. **リアルタイムレベル** — 実機で chunk 境界、RTF、lookahead、総遅延を測り、連続運転する。**未到達**、かつ **2026-09-14 の決定により当面の目標ではありません**（品質が十分になってから）。**段ごとの RTF は測定済み**（M5）ですが、chunk 境界・audio I/O・連続運転は未測定です。`realtime_capable` は `rtf_total < 1` を見ているだけなので、これを根拠にしません。

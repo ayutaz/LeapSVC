@@ -433,8 +433,10 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 10. **target 類似の blind**（「どちらが target 本人に似ているか」。**GPU 不要**、材料は `out/m5/blind/`）。**未実施**。
 11. **案 B: base から GAN 付きで学習し直す**（条件付きトラック C の残り。8〜12 時間。**要ユーザー判断**）。
 12. **CER +0.168 の分解**（上限が使える 18 clip で、言語・性別・移調・有声率と突き合わせる）。
-13. **ボコーダーの実行経路の実測**（M6 の前提。GPU の end-to-end RTF の 93% がボコーダー）。
-14. offline gate 後に streaming student（M6）。
+13. ~~ボコーダーの実行経路の実測~~ / ~~streaming student~~ — **後回し（2026-09-14 決定）。**
+    **M6 は直列経路から外し、品質が十分になってから**着手します（must ではありません）。
+    着手するときの最初の作業は蒸留ではなく**ボコーダーの実行経路の測定**です
+    （[起動条件](svc-plan.md#m6-streaming-student)）。
 
 10〜14 の位置づけと推奨順は [実行計画](svc-plan.md#2b-ここからの計画) の 2b 節にあります。
 
