@@ -538,6 +538,9 @@ def tally(sheet: Sequence[dict[str, Any]], *,
     if question is not None and question not in QUESTIONS:
         raise ValueError(f"知らない質問です（{question!r}）。{sorted(QUESTIONS)} のいずれか")
     wins: dict[str, int] = {}
+    # **どちら側を選んだかも数えます。** 判別できないとき、人は「最後に聴いたほう」を
+    # 選びます（A -> B の並びでは B）。**これを見ないと位置の偏りを系の差と取り違えます。**
+    sides = {"A": 0, "B": 0}
     ties = missing = 0
     for row in sheet:
         vote = str(row.get("vote", "")).strip()
@@ -551,6 +554,7 @@ def tally(sheet: Sequence[dict[str, Any]], *,
             raise ValueError(
                 f"vote は A / B / tie / 空 のいずれかです（{vote!r} が来ました）。"
                 "system 名を直接書くと、どちら側で聴いたのかが失われます")
+        sides[vote] += 1
         winner = str(row[vote])
         wins[winner] = wins.get(winner, 0) + 1
 
@@ -561,11 +565,15 @@ def tally(sheet: Sequence[dict[str, Any]], *,
     top = max(wins.values()) if wins else 0
     return {
         "question": question,
-        "wins": wins, "ties": ties, "n_missing": missing,
+        "wins": wins, "sides": sides, "ties": ties, "n_missing": missing,
         "n_voted": decisive + ties, "n_decisive": decisive,
         "p_two_sided": _p_sign_test(top, decisive),
+        # **系の p と混ぜない。** 別の仮説（位置の偏り）なので別に出す。小さいほど
+        # 「系ではなく side を選んでいた」疑いが強い。
+        "p_side": _p_sign_test(max(sides.values()), decisive),
         "note": ("符号検定は clip を独立とみなした参考値。評価者は 1 名なので、"
-                 "報告では N=1 と clip 数を必ず併記する"),
+                 "報告では N=1 と clip 数を必ず併記する。**p_side が小さいときは、"
+                 "系の勝敗を読む前に位置の偏りを疑う**"),
     }
 
 
@@ -639,6 +647,11 @@ def _cmd_tally(a) -> int:
         print(f"  {name:10s} {w:3d} 勝")
     print(f"  引き分け {rep['ties']} / 未記入 {rep['n_missing']} / 判定 {rep['n_decisive']}")
     print(f"  符号検定 p = {rep['p_two_sided']:.4f}（参考値）")
+    s = rep["sides"]
+    print(f"  side: A {s['A']} / B {s['B']}  p = {rep['p_side']:.4f}")
+    if rep["n_decisive"] and rep["p_side"] <= rep["p_two_sided"]:
+        print("  ** 位置の偏りが系の差より強く出ています。系の勝敗を読む前に、"
+              "判別できていたのかを疑うこと **")
     print(f"\n  ** {rep['note']} **")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)

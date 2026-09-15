@@ -1616,6 +1616,35 @@ class BlindSimilarityPageTests(unittest.TestCase):
         for name in ("leapsvc", "seedvc", "seed-vc"):
             self.assertNotIn(name, html)
 
+    def test_tally_records_which_side_was_chosen(self):
+        # **位置の偏りを出さない集計は、系の差と取り違えます。** 判別できないとき、
+        # 人は「最後に聴いたほう」を選びます（A -> B の並びでは B）。実際に起きた。
+        from tools.blind_test import tally
+        sheet = [{"pair": f"pair{i:02d}", "clip": f"c{i}", "vote": "B",
+                  "A": "x", "B": "y"} for i in range(4)]
+        rep = tally(sheet, question="similarity")
+        self.assertEqual(rep["sides"], {"A": 0, "B": 4})
+
+    def test_a_side_bias_is_not_read_as_a_system_difference(self):
+        # 全票が B でも、B に居た系が入れ替わっていれば勝敗は割れる。**両方出すこと。**
+        from tools.blind_test import tally
+        sheet = [{"pair": "pair00", "clip": "c0", "vote": "B", "A": "x", "B": "y"},
+                 {"pair": "pair01", "clip": "c1", "vote": "B", "A": "y", "B": "x"}]
+        rep = tally(sheet)
+        self.assertEqual(rep["sides"], {"A": 0, "B": 2})
+        self.assertEqual(rep["wins"], {"x": 1, "y": 1})
+
+    def test_side_bias_gets_its_own_p_value(self):
+        # 系の p と混ぜない。**別の仮説**（位置の偏り）なので別に出す。
+        from tools.blind_test import tally
+        sheet = [{"pair": f"pair{i:02d}", "clip": f"c{i}", "vote": "B",
+                  "A": "x" if i % 2 else "y", "B": "y" if i % 2 else "x"}
+                 for i in range(6)]
+        rep = tally(sheet)
+        self.assertAlmostEqual(rep["p_side"], 0.03125, places=5)
+        self.assertGreater(rep["p_two_sided"], 0.9)
+
+
     def test_tally_records_which_question_was_asked(self):
         # 質問を書かない result.json は、2 つ並ぶと**どちらの結果か分からなくなります**。
         from tools.blind_test import tally
