@@ -478,6 +478,82 @@ render();
 """
 
 
+# anchor（catch trial）の合格線。これを下回ったら「判別できていない」と読む。
+ANCHOR_MIN_CORRECT_RATIO = 0.75
+
+
+def anchor_common_sr(rates: Sequence[int]) -> int:
+    """anchor の 2 側を揃える sample rate（低いほうに合わせる）。
+
+    anchor の素材は別コーパスから来ます（実測で波音リツ 44.1k / 棗 48k / 鬼灯 96k）。
+    **片側だけ触ると帯域の差が「どちらが target か」の手がかりになります。** 両側を同じ
+    rate へ落とせば非対称は入りません。低いほうに合わせるのは、上げても情報が増えない
+    ためです。
+
+    A / B の系ペアは**揃えずに例外**にします（そちらは測定の契約で、rate が違う 2 系を
+    比べるのは不公平だからです）。anchor は参照録音どうしなので提示の話です。
+    """
+    rs = [int(r) for r in rates]
+    if not rs:
+        raise ValueError("sample rate がありません")
+    return min(rs)
+
+
+def make_anchors(pairs: Sequence[dict], *, seed: int) -> list[dict]:
+    """**答えが分かっているペア**を作る（target 本人 対 無関係な話者）。
+
+    ①（target 類似の blind）で、判定 4 票すべてが「後に聴いた側」に張り付き、評価者は
+    「意味がないように思えます」と述べました。**anchor が無いと、「2 系が同一」と
+    「評価者が課題を遂行できていない」を区別できません。**
+
+    **左右は clip ごとに振ります。** 常に A が正解だと並びを覚えられます。
+    """
+    rng = random.Random(seed)
+    rows = []
+    for i, p in enumerate(pairs):
+        target_first = rng.random() < 0.5
+        rows.append({
+            "pair": f"anchor{i:02d}", "clip": "anchor",
+            "a": p["target"] if target_first else p["foil"],
+            "b": p["foil"] if target_first else p["target"],
+            # **これはページへ渡しません。** 正解が出たら catch trial の意味がありません。
+            "expected": "A" if target_first else "B",
+        })
+    return rows
+
+
+def score_anchors(rows: Sequence[dict]) -> dict[str, Any]:
+    """anchor の正解数。**2 種類の失敗を分けるための門。**
+
+    `task_performed` が False のとき、**本番の拮抗を「2 系が同一」と読んではいけません**。
+    未記入しか無ければ None（判断しない）です。
+    """
+    n_correct = n_wrong = n_tie = n_missing = 0
+    for r in rows:
+        if "expected" not in r:
+            raise ValueError(
+                f"{r.get('pair')}: expected がありません。**本番のペアを混ぜて採点すると"
+                "正解率が薄まり、門が効かなくなります**")
+        vote = str(r.get("vote") or "").strip()
+        if not vote:
+            n_missing += 1
+        elif vote.lower() == "tie":
+            # target 本人 対 無関係な話者。**引き分けは判別できていない印。**
+            n_tie += 1
+        elif vote == r["expected"]:
+            n_correct += 1
+        else:
+            n_wrong += 1
+    answered = n_correct + n_wrong + n_tie
+    return {
+        "n": len(rows), "n_correct": n_correct, "n_wrong": n_wrong,
+        "n_tie": n_tie, "n_missing": n_missing, "n_answered": answered,
+        "min_correct_ratio": ANCHOR_MIN_CORRECT_RATIO,
+        "task_performed": (None if answered == 0
+                           else n_correct / answered >= ANCHOR_MIN_CORRECT_RATIO),
+    }
+
+
 def clip_tag(name: str) -> str:
     """変換結果のファイル名から clip の tag を取る。
 
@@ -615,6 +691,46 @@ def _cmd_prepare(a) -> int:
         sf.write(out / "paired" / f"{pair}_AB.wav", concat_pair(*matched, sr=srs[0]), srs[0])
         key.append({"pair": pair, **row})
         sheet.append(f"{pair},{row['clip']},")
+    # **anchor（catch trial）を混ぜる。** 答えが分かっているペアなので、外したら
+    # 「判別できていない」と読める。**正解は sheet にも key.json にも書かない。**
+    if a.anchor_target or a.anchor_foil:
+        if len(a.anchor_target) != len(a.anchor_foil):
+            sys.exit("--anchor-target と --anchor-foil は同数にしてください"
+                     f"（{len(a.anchor_target)} 対 {len(a.anchor_foil)}）")
+        anchors = make_anchors([{"target": x, "foil": y} for x, y
+                                in zip(a.anchor_target, a.anchor_foil, strict=True)],
+                               seed=a.seed)
+        for row in anchors:
+            wavs, srs = [], []
+            for side in ("a", "b"):
+                w, sr = sf.read(row[side], dtype="float32", always_2d=False)
+                if w.ndim > 1:
+                    w = w.mean(axis=1)
+                wavs.append(w)
+                srs.append(sr)
+            # **両側を同じ rate へ対称に落とす。** 片側だけ触ると帯域が手がかりになる。
+            sr_a = anchor_common_sr(srs)
+            if srs[0] != srs[1]:
+                import numpy as np
+
+                from preprocess.svc.extract import _resample
+
+                wavs = [_resample(np.ascontiguousarray(w, dtype=np.float32), s, sr_a)
+                        for w, s in zip(wavs, srs, strict=True)]
+                print(f"  {row['pair']}: anchor を {srs} -> {sr_a} Hz へ揃えました"
+                      "（片側だけ触ると帯域が手がかりになるため両側）")
+            matched = match_loudness(*wavs)
+            for side, w in zip(("A", "B"), matched, strict=True):
+                sf.write(out / "audio" / f"{row['pair']}_{side}.wav", w, sr_a)
+            sf.write(out / "paired" / f"{row['pair']}_AB.wav",
+                     concat_pair(*matched, sr=sr_a), sr_a)
+            sheet.append(f"{row['pair']},anchor,")
+        # **正解はここだけに置く。** ページにも key.json にも出さない。
+        (out / "anchors.json").write_text(
+            json.dumps([{k: r[k] for k in ("pair", "expected")} for r in anchors],
+                       ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"  -> {out}/anchors.json （anchor {len(anchors)} 本の正解。**採点まで見ない**）")
+
     (out / "key.json").write_text(json.dumps(key, ensure_ascii=False, indent=1),
                                  encoding="utf-8")
     (out / "sheet.csv").write_text("\n".join(sheet) + "\n", encoding="utf-8")
@@ -638,7 +754,20 @@ def _cmd_tally(a) -> int:
     if not sheet:
         sys.exit("採点シートに有効な行がありません")
 
+    # **anchor は系の比較ではないので勝敗に入れない**（key.json に無いので上の
+    # ループで既に除かれている）。別に採点して、結果の読み方の門にする。
+    anchor_path = Path(a.sheet).parent / "anchors.json"
+    anchor_rep = None
+    if anchor_path.exists():
+        exp = {r["pair"]: r["expected"]
+               for r in json.loads(anchor_path.read_text(encoding="utf-8"))}
+        anchor_rep = score_anchors(
+            [{"pair": r["pair"], "expected": exp[r["pair"]], "vote": r["vote"]}
+             for r in read_sheet(a.sheet) if r["pair"] in exp])
+
     rep = tally(sheet, question=getattr(a, "question", None))
+    if anchor_rep is not None:
+        rep["anchors"] = anchor_rep
     rep["rows"] = sheet
     # **何を聞いたかを見出しに出す。** preference と similarity の結果は別物なので、
     # 出力を眺めただけで取り違えないようにする。
@@ -653,6 +782,15 @@ def _cmd_tally(a) -> int:
         print("  ** 位置の偏りが系の差より強く出ています。系の勝敗を読む前に、"
               "判別できていたのかを疑うこと **")
     print(f"\n  ** {rep['note']} **")
+    if anchor_rep is not None:
+        print(f"\n  anchor（catch trial）: 正解 {anchor_rep['n_correct']} / "
+              f"不正解 {anchor_rep['n_wrong']} / 引き分け {anchor_rep['n_tie']} / "
+              f"未記入 {anchor_rep['n_missing']}")
+        if anchor_rep["task_performed"] is False:
+            print("  ** anchor を外しています。**本番の拮抗を「2 系が同一」と読まないこと** "
+                  "―― 判別できていない可能性があります **")
+        elif anchor_rep["task_performed"]:
+            print("  ** anchor は取れています。本番の拮抗は「2 系が近い」と読めます **")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         Path(a.out).write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -1020,6 +1158,11 @@ def main() -> int:
     p1.add_argument("--b-name", default="B系")
     p1.add_argument("--out", required=True)
     p1.add_argument("--seed", type=int, default=0)
+    p1.add_argument("--anchor-target", nargs="*", default=[],
+                    help="**catch trial の正解側**（target 話者本人の録音）。"
+                         "**無いと「2 系が同一」と「判別できていない」を区別できません**")
+    p1.add_argument("--anchor-foil", nargs="*", default=[],
+                    help="catch trial の不正解側（無関係な話者）。--anchor-target と同数")
     p1.set_defaults(func=_cmd_prepare)
 
     p2 = sub.add_parser("tally", help="採点シートを集計する")

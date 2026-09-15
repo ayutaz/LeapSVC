@@ -1827,6 +1827,89 @@ class SvcConvertProvenanceTests(unittest.TestCase):
         self.assertIsNotNone(deterministic_env_error("cuda", {"CUBLAS_WORKSPACE_CONFIG": "1"}))
 
 
+class BlindAnchorTests(unittest.TestCase):
+    """anchor（catch trial）。**「2 系が同一」と「判別できていない」を分ける。**
+
+    ①（target 類似の blind）で、判定 4 票すべてが「後に聴いた側」に張り付き、評価者は
+    「意味がないように思えます」と述べました。**anchor が無いと、この 2 つを区別できません。**
+
+    anchor は **答えが分かっているペア**です。target 本人の録音 対 無関係な話者を混ぜておき、
+    **そこを外したら「判別できていない」**、当てられたのに本番が拮抗するなら
+    **「2 系が近い」**と読めます。
+    """
+
+    def test_anchor_rows_carry_the_expected_answer(self):
+        from tools.blind_test import make_anchors
+        rows = make_anchors([{"target": "context/t.wav", "foil": "context/f.wav"}], seed=0)
+        self.assertEqual(len(rows), 1)
+        self.assertIn(rows[0]["expected"], ("A", "B"))
+
+    def test_the_anchor_side_is_randomised(self):
+        # 常に A が正解だと、並びを覚えられます。
+        from tools.blind_test import make_anchors
+        pairs = [{"target": f"context/t{i}.wav", "foil": f"context/f{i}.wav"}
+                 for i in range(12)]
+        sides = {r["expected"] for r in make_anchors(pairs, seed=3)}
+        self.assertEqual(sides, {"A", "B"})
+
+    def test_the_expected_answer_never_reaches_the_page(self):
+        # **正解がページに出たら catch trial の意味がありません。**
+        from tools.blind_test import listen_page, make_anchors
+        anchors = make_anchors([{"target": "context/t.wav", "foil": "context/f.wav"}], seed=0)
+        rows = [{"pair": "anchor00", "clip": "anchor", "a": anchors[0]["a"],
+                 "b": anchors[0]["b"]}]
+        html = listen_page(rows, question="similarity",
+                           references=[{"label": "target", "path": "context/t.wav"}])
+        self.assertNotIn("expected", html)
+
+    def test_anchor_material_gets_a_common_sample_rate(self):
+        # anchor の素材は別コーパスから来る（実測でリツ 44.1k / 棗 48k / 鬼灯 96k）。
+        # **片側だけ触ると帯域が「どちらが target か」の手がかりになります。**
+        # 両側を同じ rate へ対称に落とす。
+        from tools.blind_test import anchor_common_sr
+        self.assertEqual(anchor_common_sr([48000, 44100]), 44100)
+        self.assertEqual(anchor_common_sr([44100, 44100]), 44100)
+        self.assertEqual(anchor_common_sr([96000, 48000]), 48000)
+
+    def test_anchor_common_rate_needs_rates(self):
+        from tools.blind_test import anchor_common_sr
+        with self.assertRaises(ValueError):
+            anchor_common_sr([])
+
+    def test_anchor_scoring_separates_the_two_failures(self):
+        from tools.blind_test import score_anchors
+        # 全問正解 -> 課題は遂行できている
+        good = score_anchors([{"pair": "anchor00", "expected": "A", "vote": "A"},
+                              {"pair": "anchor01", "expected": "B", "vote": "B"}])
+        self.assertEqual(good["n_correct"], 2)
+        self.assertTrue(good["task_performed"])
+        # 全問不正解 -> **本番の拮抗を「2 系が同一」と読んではいけない**
+        bad = score_anchors([{"pair": "anchor00", "expected": "A", "vote": "B"},
+                             {"pair": "anchor01", "expected": "B", "vote": "A"}])
+        self.assertEqual(bad["n_correct"], 0)
+        self.assertFalse(bad["task_performed"])
+
+    def test_a_tie_on_an_anchor_counts_as_failing_it(self):
+        # anchor は target 本人 対 無関係な話者。**引き分けは判別できていない印です。**
+        from tools.blind_test import score_anchors
+        r = score_anchors([{"pair": "anchor00", "expected": "A", "vote": "tie"}])
+        self.assertEqual(r["n_correct"], 0)
+        self.assertEqual(r["n_tie"], 1)
+
+    def test_unanswered_anchors_are_not_counted_as_wrong(self):
+        # **未記入と間違いを混同しない。**
+        from tools.blind_test import score_anchors
+        r = score_anchors([{"pair": "anchor00", "expected": "A", "vote": ""}])
+        self.assertEqual(r["n_missing"], 1)
+        self.assertIsNone(r["task_performed"])
+
+    def test_scoring_refuses_rows_without_an_expected_answer(self):
+        # 本番のペアを混ぜて採点すると、**正解率が薄まって門が効かなくなります。**
+        from tools.blind_test import score_anchors
+        with self.assertRaises(ValueError):
+            score_anchors([{"pair": "pair00", "vote": "A"}])
+
+
 class SpeakerSimilarityCollectionTests(unittest.TestCase):
     """どの WAV を「変換結果」として数えるか。**ここを間違えると別種のファイルを比べる。**"""
 
