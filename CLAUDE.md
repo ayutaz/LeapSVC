@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **452 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 217）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **455 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 220）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -321,6 +321,15 @@ tensorboard・onnx・ruff が消えました）。**必要な extra を毎回す
 - **M5 の客観指標は 4 つとも「上限との差」で読みます。** `tools/svc_convert.py --self-check` が
 出す `*_vocoder_only.wav`（GT mel をボコーダーに通した再合成）が上限で、`asr_cer.py` と
 `signal_quality.py` は**上限が無ければ実行を拒否**します。絶対値を品質として報告しないこと。
+- **上限（`*_vocoder_only.wav`）は run をまたいで再現しません（2026-09-15 実測）。**
+上限は GT mel をボコーダーに通した再合成で **checkpoint に依存しない量**ですが、**同じ V3 の
+2 つの run で 26 clip 中 6 本が 5 点を超えてずれました**（`holdout05` は 100% → 11.3%、
+`unseen08` は 266.7% → 3233.3%）。sha256 も一致しません。**GT mel を変換のたびに CUDA で
+作り直していて、既定では bit 再現しない**ためです（ln-mel の最大差 7.95e-02）。
+**ASR は離散なので、わずかな音の差が書き起こしを丸ごと別物にします** ―― 連続量（SQUIM・
+centroid）にこの感度はなく、**CER に固有**です。**系を比べるなら、上限を 1 度だけ作って
+共有するか、決定的モードで変換すること。** 比較の前に**上限 CER が一致しているかを確かめる**
+だけでも防げます。
 - **CER は言語ごとに割ってから読むこと（2026-09-15 実測）。** M5 の test set は
 **日本語 6 / ラテン語 10 / イタリア語 5 / 英語 5** の混合で、pooled の差 **+16.8 点**は
 言語別に **日本語 +4.8 / 英語 +13.1 / ラテン語（読めない）/ イタリア語（n=1）** でした。
