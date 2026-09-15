@@ -689,6 +689,22 @@ class ToolHelpTests(unittest.TestCase):
             with self.subTest(tool=name):
                 self.assertIn("usage", self._help_text(name).lower())
 
+    def test_every_tool_creates_its_output_directory(self):
+        """**`--out` の親を作らないと、測定が終わってから書き出しで落ちます。**
+
+        実際に `speaker_similarity.py` で踏みました。ECAPA を 4 条件ぶん CPU で回した後に
+        `FileNotFoundError` で全部が失われ、しかも**シェルのループは終了コード 0 を返した**
+        ので成功に見えました。**重い測定ほど、結果を捨てる失敗が痛いです。**
+        """
+        bad = []
+        for f in sorted(Path(__file__).parent.glob("tools/*.py")):
+            text = f.read_text(encoding="utf-8")
+            if "a.out" not in text and "--out" not in text:
+                continue
+            if "mkdir(parents=True" not in text:
+                bad.append(f.name)
+        self.assertEqual(bad, [], f"--out の親ディレクトリを作っていない: {bad}")
+
     def test_no_tool_source_contains_characters_cp932_cannot_encode(self):
         """**help だけでは足りません。** 実行時の print に em-dash を書いて落ちました
         （`guard_rail.py`。`nhv_indist.py` で同じ誤りを直した後です）。開発機は日本語

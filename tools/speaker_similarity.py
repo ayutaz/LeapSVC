@@ -305,6 +305,9 @@ def main() -> int:
         print(f"  下限（無関係）   : {floor['mean']:.4f}  (n={floor['n']})")
         print(f"  -> 回復率        : {rep['recovery'] * 100:.1f}%")
     if a.out:
+        # **親を作ってから書く。** 作らずに測ると、ECAPA を回し切った後で
+        # FileNotFoundError になり、**重い測定の結果が丸ごと失われます**（実際に踏んだ）。
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         Path(a.out).write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"\n-> {a.out}")
     return 0

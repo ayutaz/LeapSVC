@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **488 件**（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 79 / `test_svc_metrics` 237）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **489 件**（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 79 / `test_svc_metrics` 237）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -264,6 +264,12 @@ target 本人の録音は centroid 1160 Hz、LeapSVC は 1067 Hz でほぼ一致
 比べることになります（実測で話者類似度が 0.5886 → 0.4981 に見えていました）。
 `pick_clips()` が両方を落とします。**`--n-clips` の既定は 16 で、26 clip を黙って切ります** ―
 切り詰めは report に残るようにしました。
+- **`--out` の親ディレクトリを作らないツールを増やさないこと。** `speaker_similarity.py`
+だけが作っておらず、**ECAPA を 4 条件ぶん CPU で回し切った後に `FileNotFoundError` で
+結果が丸ごと失われました**。しかも**シェルの `for` ループは終了コード 0 を返した**ので、
+成功したように見えました。**重い測定ほど、結果を捨てる失敗が痛いです。**
+`test_svc_model.py` の `test_every_tool_creates_its_output_directory` が `tools/*.py` を
+走査して防ぎます。
 - **主観テストの anchor は `tools/blind_test.py prepare --anchor-target ... --anchor-foil ...`で入れます（2026-09-15 実装）。** 正解は `anchors.json` にだけ置き、**ページと `key.json`
 には出しません**。`tally` が別に採点し、**合格線 75% を下回ると「本番の拮抗を『2 系が同一』と
 読まないこと」と警告**します。**引き分けは不正解**（target 本人 対 無関係な話者で引き分けなら
