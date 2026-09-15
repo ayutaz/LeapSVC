@@ -40,7 +40,7 @@ source WAV -> content / F0 / UV / loudness -> LeapSVC -> mel + F0 -> NHVSing -> 
 | スタイル | 実装済み | 同一話者内の style 切り替えを想定 |
 | NHVSing 連携 | 実装済み | 44.1 kHz、hop 256 の構成を含む |
 | ONNX export | 実装済み | 主に既存 SVS 経路向け |
-| OpenUTAU export | 実験的 | README 自身が実機未検証と明記 |
+| OpenUTAU export | **削除済み** | **上流で削除されました**（2026-09-13 に取り込み）。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません |
 | 直接 SVC | 元ブランチにはない | 本ブランチで追加中 |
 
 LeapSinger README に記載された音響モデルの CPU RTF は、Apple Silicon 10 コア・約 7 秒のフレーズで Python native 1 コアが 0.027 です。これは作者の条件での既存 **SVS 音響モデル**の測定値であり、SVC の特徴抽出、ボコーダー、ストリーミング I/O を含む end-to-end 遅延ではありません。

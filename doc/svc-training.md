@@ -13,6 +13,13 @@ Phase 5  streaming student distillation
 
 品質比較前に Phase 0〜3 の実行記録を残し、Phase 4 を通過するまで Phase 5 のリアルタイム最適化を主目的にしません。
 
+**決定（2026-09-14）: Phase 5（= M6）は直列経路から外し、起動条件つきにしました。**
+must ではありません。起動条件は「同一 test set の blind comparison で preference が
+baseline を上回り、guard rail を 1 つも落としていないこと」です
+（[実行計画](svc-plan.md#m6-streaming-student)）。**着手するときの最初の作業は蒸留では
+なくボコーダーの実行経路の測定です** ―― GPU の end-to-end RTF 0.464 のうち
+**ボコーダーが 0.432（93%）**で、**蒸留は lookahead に効き RTF には効きません**。
+
 ## 2. Phase 0: 前処理と overfit smoke
 
 1. 権利確認済みの短い isolated vocal から shard を作る。
