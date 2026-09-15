@@ -447,8 +447,11 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 13. ~~主観テストに anchor（catch trial）を入れる~~ — **完了（2026-09-15、1b）。**
     `blind_test.py prepare --anchor-target / --anchor-foil`。正解は `anchors.json` だけに置き、
     `tally` が合格線 75% で読み方の門にする。
-14. **M5 の 26 clip を共有の上限で変換し直す**（**次にやること**。これで初めて系間比較が成立する）。
-15. **男声 source の transpose 掃引**（+5 / +7 / +9 / +12。**再学習なし**。明瞭度が最も崩れる条件）。
+14. ~~M5 の 26 clip を共有の上限で変換し直す~~ — **完了（2026-09-15）。**
+    `out/m5/leapsvc_1step_v31_shared/`（`ckpt_010000` / 1 step / V3.1）。**上限は 26 本すべて
+    bit 一致**し、`ceiling_comparable` は `true`。これで系間比較が成立する。
+15. **男声 source の transpose 掃引**（**次にやること**。+5 / +7 / +9 / +12。**再学習なし**。
+    明瞭度が最も崩れる条件。上限が揃ったので判定できる）。
 16. **案 B: base から GAN 付きで学習し直す**（条件付きトラック C の残り。8〜12 時間。**要ユーザー判断**）。
 17. ~~ボコーダーの実行経路の実測~~ / ~~streaming student~~ — **後回し（2026-09-14 決定）。**
     **M6 は直列経路から外し、品質が十分になってから**着手します（must ではありません）。
