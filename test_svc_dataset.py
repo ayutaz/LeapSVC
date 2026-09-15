@@ -621,6 +621,38 @@ class JaTestsetTests(unittest.TestCase):
                             durations={})
 
 
+class HoldoutReproductionTests(unittest.TestCase):
+    r"""**学習 hold-out を後から再現できること。**
+
+    `SVCFeatureDataset` の split は `random.Random(seed).sample(sorted(曲名), n)` です。
+    曲名は `preprocess.svc.run` が **casefold してから** `[^\w-]+` を `_` に置き換えた形で、
+    **casefold を忘れると並び順が変わり、別の曲が hold-out になります**（実際に一度
+    取り違えました）。
+
+    再現できると、**どの曲が学習に入っていたか**を後から判定できます。これは
+    「明瞭度の劣化が容量の問題か汎化の問題か」を切り分けるのに要ります。
+    """
+
+    def test_casefold_changes_which_songs_are_held_out(self):
+        import random
+        raw = ["ARROW+3_normal", "anywhere-3_normal", "Baptism+3_normal",
+               "boukyakumoyou-3_normal", "skyhighblue-3_normal", "silentrail_normal"]
+        import re
+        safe = re.compile(r"[^\w-]+")
+        plain = sorted({safe.sub("_", s) for s in raw})
+        folded = sorted({safe.sub("_", s.casefold()) for s in raw})
+        self.assertNotEqual(random.Random(42).sample(plain, 3),
+                            random.Random(42).sample(folded, 3))
+
+    def test_the_split_is_reproducible_from_the_song_list(self):
+        # 同じ曲名リストと seed からは必ず同じ hold-out が出る（後から判定できる根拠）。
+        import random
+        songs = sorted(f"song{i:02d}" for i in range(50))
+        a = sorted(random.Random(42).sample(songs, 3))
+        b = sorted(random.Random(42).sample(songs, 3))
+        self.assertEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()
 
