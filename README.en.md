@@ -200,7 +200,9 @@ what conditioning directly on F0 buys.
 75% of ground truth's fine detail. The vocoder and the mel representation were not at fault,
 no source-speaker identity leaked through, and speaker conditioning worked. Enabling the GAN
 during fine-tuning moved unseen-source recovery from 69.4% to 75.3% (Seed-VC 77.1%) **without
-costing content preservation or pitch fidelity**. **A blind listening test (N=1 informal preference, 26 pairs, 2026-09-13) also went to
+costing content preservation or pitch fidelity**. **Speaker similarity could not be told apart by ear either.** A separate blind test asking which clip sounds more like the target (2026-09-15) was stopped after 6 of 12 pairs: all four decisive votes landed on whichever side was heard last, so it reached no verdict. That is consistent with the objective tie (0.5899 vs 0.5912).
+
+**A blind listening test (N=1 informal preference, 26 pairs, 2026-09-13) also went to
 Seed-VC**: 21 of 25 decisive pairs, 1 tie. **The gap is concentrated on unseen sources**
 (2 vs 18 across 20 pairs); on the target's own held-out songs the two are level
 (2 vs 3 with 1 tie across 6 pairs). **The real-time student is not done yet.**

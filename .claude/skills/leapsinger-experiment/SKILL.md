@@ -255,10 +255,34 @@ spectral centroid の不足が 30,000 step 時点で **1 step −18.1% / 16 step
 ことと、**交絡しにくい別の質問を立てる**ことだけです。**都合の悪い結果を後から無効にしない**
 こと。事前登録の規律が壊れます。**足せるのは別の質問であって、取り消しではありません。**
 
+**上限（`*_vocoder_only.wav`）は作り直さず使い回すこと。** NHVSing の ONNX には
+**seed 属性の無い `RandomNormalLike`** があり、**ボコーダーを通した出力は run ごとに必ず
+変わります**（CPU + `use_deterministic_algorithms` でも bit 一致しません）。実測で、同じ V3 の
+2 つの run で **26 clip 中 6 本の上限 CER が 5 点を超えてずれました**（最大 88 点）。
+
+```bash
+# 1 つ目の系で上限を作り、以降はそれを使い回す
+uv run python tools/svc_convert.py ... --self-check --ceiling-from out/<最初の系>
+```
+
+`convert.json` の **`ceiling_comparable` が `false` の記録どうしは「上限との差」を比べられ
+ません**。**比較の前にこのフラグを見ること。** 連続量（SQUIM・centroid）への影響は小さく、
+**CER に強く出ます**（ASR が離散なので、わずかな音の差で書き起こしが丸ごと変わる）。
+
 **主観テストには anchor を混ぜること。** 入れないと**「2 系が同一」と「評価者が課題を
 遂行できていない」を区別できません**。実測で、判定 4 票が**すべて「後に聴いた側」**に張り付き、
 評価者は「意味がないように思えます」と述べました。**target 本人 対 無関係な話者**のペアを
 混ぜておけば、判別できる耳であることを先に確認できます。
+
+```bash
+uv run python tools/blind_test.py prepare --a <系A> --b <系B> --out <dir> --seed <n> \
+  --anchor-target t1.wav t2.wav t3.wav --anchor-foil f1.wav f2.wav f3.wav
+```
+
+正解は `anchors.json` にだけ置かれ、**ページにも `key.json` にも出ません**。`tally` が別に
+採点し、**合格線 75%** を下回ると「本番の拮抗を『2 系が同一』と読まないこと」と警告します。
+**引き分けは不正解**（本人 対 無関係で引き分けなら判別できていない印）、**未記入は不正解に
+しません**。
 
 **集計では side の偏りを必ず見ること。** `tally()` は `sides` と `p_side` を返します。
 **p_side が系の p より小さいときは、系の勝敗を読む前に「判別できていたのか」を疑う**こと。
