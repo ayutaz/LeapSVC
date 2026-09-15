@@ -85,7 +85,7 @@ speaker 条件ではなく `x0` の側です。
 
 含意:
 
-- **変換時は `--transpose` で source F0 を移調する**（male source → female target で +7〜+12 半音）。
+- **変換時は `--transpose` で source F0 を移調する**（低い声の source には **+7 半音**。`tools/svc_defaults.py` の `SVC_TRANSPOSE_LOW_VOICE`。2026-09-16 の掃引で ~~+7〜+12~~ から確定。**+12 は話者類似度も明瞭度も劣ります**）。
   実用上はこれで回避できます（[`tools/svc_convert.py`](../tools/svc_convert.py)）。
 - **fine-tune では緩みません**（M4 で実測。未知 source の明るさの偏差 33.7 → 37.5）。
 - モデル側で緩めるなら**特徴抽出前**の pitch augmentation が要ります（**未実装**。SVC は特徴量が

@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **489 件**（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 79 / `test_svc_metrics` 237）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **491 件**（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 79 / `test_svc_metrics` 239）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -209,7 +209,7 @@ hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と 
 - **ローカルの GPU は `nvidia-smi` が正常に見えても context 生成に失敗することがあります**（`CUDA error: CUDA-capable device(s) is/are busy or unavailable`）。`torch.cuda.is_available()` は driver の有無しか見ないので **True を返しても使えるとは限りません**。判定するなら `torch.zeros(1, device="cuda")` を実際に確保すること。この状態では推論スクリプトも落ちるので `--device cpu` で回します。
 - **CPU で回すときは `CUDA_VISIBLE_DEVICES=-1` を渡すこと。** torch 2.13 の optimizer は `step()` ごとに `torch.accelerator.current_stream()` を呼ぶため、CPU tensor しか無くても壊れた CUDA に触って落ちます。**`""` では効かず `-1` が要ります。** `run_smoke.py --device cpu` は自動で渡します。`train.py` の `pin_memory` も `_loader_kwargs()` で CUDA のときだけ有効です（回帰テストは `test_svc_model.LoaderKwargsTests`）。
 - **`tools/smoke/` の合成データは `configs/svc_base.yaml` の `model.content_dim` を読んで作ります。** ここを定数に戻すと、config を変えたときに SVC の学習・再開・推論ステージが黙って落ちます（実際に起きました）。
-- **出力のスペクトル傾斜は入力の F0 に強く従います。** 40 clip の実測で、明るさが同じ男女の歌唱を**同じ target** へ変換すると 540 Hz 対 1067 Hz になりました（target を男性に替えても男性 source は動きません）。content と loudness を固定して F0 だけを ±12 半音した交差実験で確定しています（男性 +12 で 540 → **1196 Hz**、女性 −12 で 1067 → 378 Hz）。**male source → female target では `--transpose` に +7〜+12 を渡すこと**（`tools/svc_convert.py` / `tools/m3_verify.py`）。移調なしの数値だけでモデルの良し悪しを判断しないこと。
+- **出力のスペクトル傾斜は入力の F0 に強く従います。** 40 clip の実測で、明るさが同じ男女の歌唱を**同じ target** へ変換すると 540 Hz 対 1067 Hz になりました（target を男性に替えても男性 source は動きません）。content と loudness を固定して F0 だけを ±12 半音した交差実験で確定しています（男性 +12 で 540 → **1196 Hz**、女性 −12 で 1067 → 378 Hz）。**低い声の source には `--transpose` に +7 を渡すこと**（`tools/svc_defaults.py` の `SVC_TRANSPOSE_LOW_VOICE`。2026-09-16 の掃引で決定）。~~+7〜+12~~ という範囲での推奨を、**日本語 8 clip の掃引で +7 に確定**しました ―― **それまでの +12 は両方の軸で劣ります**（回復率 90.8% → 81.6%、CER の上限との差 +12.5 → **+27.0 点**で制約 17.4 点を外れる）。**理論値の F0 一致（+9.7 半音）より少ない移調のほうが良い**ので、**話者類似度は単純な F0 の一致では決まっていません**。**n=8・1 話者・1 target なので、別の声では測り直すこと。** 移調なしの数値だけでモデルの良し悪しを判断しないこと。
 - **明るさを符号つき平均で評価しないこと。** 上限（GT mel の再合成）より明るい clip と暗い clip が打ち消し合い、平均は良く見えるのに実際は両方向へ外れている、ということが起きます（実測で範囲 −70% 〜 +33%）。**ceiling からの距離（絶対値）**で見ます。この誤りで「多 step にすると明るさが戻る」という結論を一度出しました。
 - **`num_steps` は「明るさでは同等、細部と話者性では明確に効く」。** 60,000 step の base で
 1 step と 16 step の**明るさ**は実質同等ですが（|上限比| 34.3 対 34.0）、**細部と話者性は

@@ -31,11 +31,18 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from tools.svc_defaults import SVC_TRANSPOSE_LOW_VOICE  # noqa: E402
+
 # 話者類似度の較正が通る最短の長さ（tools/speaker_similarity.py の MIN_SECONDS と同じ）。
 MIN_SECONDS = 12.0
 
 # 男性 source -> 女性 target の既定の移調量（doc/svc-plan.md M4 の前提）。
-MALE_TRANSPOSE = 12
+# **掃引で決めた値を 1 か所から取る**（`svc_defaults.py`）。名前は既存の記録
+# （`male_transpose`）に合わせていますが、**決めているのは F0 であって性別ではありません**。
+MALE_TRANSPOSE = SVC_TRANSPOSE_LOW_VOICE
 
 
 # 各性別が test set に占める最低割合。M3 では 18 女性 / 2 男性（男性 10%）で

@@ -175,7 +175,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 ### 確認済み
 
 - ボコーダーは **NHVSing V3.1**（`checkpoints/nhv_v3_1.onnx`。2026-09-13 に上流から取り込み）。**M5 の測定値は V3 で取ったもの**なので、V3.1 で測り直した値と混ぜないこと。
-- 自動テスト **489 件**が成功（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 79 / `test_svc_metrics` 237）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **491 件**が成功（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 79 / `test_svc_metrics` 239）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **55 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。
@@ -453,10 +453,11 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 15. ~~日本語素材の棚卸し~~ — **完了（2026-09-16）。** `tools/ja_material_audit.py`。
     **日本語 5 名は全員 base に入っており、未知話者は作れない。** GTSinger 日本語 2 名は
     **未使用曲ゼロ**、使えるのは `natsume` 22 曲 + `oniku` 28 曲だけ。
-16. **日本語の test set を作る**（**次にやること**。`natsume` / `oniku` の未使用曲。
-    層は「**未知曲・既知話者**」。未知話者が要るなら東北きりたん / No.7 の取得）。
-17. **低音 source の transpose 掃引**（`natsume`、+0 / +7 / +9 / +12。**再学習なし**。
-    理論値は **+9.7 半音**で、いまの既定 +12 は行き過ぎの可能性）。
+16. ~~日本語の test set を作る~~ — **完了（2026-09-16、2b）。** 50 clip
+    （`natsume` 22 + `oniku` 28）。層は「**未知曲・既知話者**」。
+17. ~~低音 source の transpose 掃引~~ — **完了（2026-09-16、2a）。** 事前登録した規則が
+    **+7** を選んだ。**それまでの +12 は両方の軸で劣る**（回復率 90.8% -> 81.6%、
+    CER の上限との差 +12.5 -> **+27.0 点**）。`SVC_TRANSPOSE_LOW_VOICE = 7.0`。
 18. **案 B: base から GAN 付きで学習し直す**（条件付きトラック C の残り。8〜12 時間。**要ユーザー判断**）。
 19. ~~ボコーダーの実行経路の実測~~ / ~~streaming student~~ — **後回し（2026-09-14 決定）。**
     **M6 は直列経路から外し、品質が十分になってから**着手します（must ではありません）。

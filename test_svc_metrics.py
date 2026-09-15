@@ -554,13 +554,15 @@ class TestSetTests(unittest.TestCase):
 
     def test_transpose_is_assigned_by_gender_not_left_to_the_operator(self):
         # 男性 source を移調し忘れると、モデルではなく音域差を測ることになる。
-        from tools.m5_testset import build_testset
+        from tools.m5_testset import MALE_TRANSPOSE, build_testset
         unseen = self._pool()
         holdout = [{"speaker": "ritsu", "gender": "female", "clip": f"h{k}",
                     "seconds": 20.0, "kind": "holdout"} for k in range(8)]
         ts = build_testset(unseen, holdout, n_unseen=20, n_holdout=6, seed=0)
         for c in ts["unseen"]:
-            self.assertEqual(c["transpose"], 12 if c["gender"] == "male" else 0)
+            # **値をハードコードしない。** 掃引で変わる（2026-09-16 に +12 -> +7）。
+            self.assertEqual(c["transpose"],
+                             MALE_TRANSPOSE if c["gender"] == "male" else 0)
 
     def test_holdout_clips_are_never_transposed(self):
         # target 自身の曲は音域が合っている。移調すると別の実験になる。
@@ -1226,6 +1228,21 @@ class SvcDefaultStepsTests(unittest.TestCase):
     **SVS 経路（`infer_mel`）は触りません。** 今回の測定は SVC 経路のみで、SVS の
     1 step 品質は別途検証済みだからです。**測っていない経路の既定を変えないこと。**
     """
+
+    def test_the_test_set_uses_the_swept_transpose(self):
+        """**掃引で決めた値と test set の値がずれないこと。**
+
+        2026-09-16 の掃引（natsume 8 clip、+0 / +7 / +10 / +12）で、事前登録した規則が
+        **+7** を選びました。**それまでの +12 は両方の軸で劣ります** ―― 話者類似度の
+        回復率が 90.8% -> 81.6%、CER の上限との差が +12.5 -> **+27.0 点**（制約は 17.4 点）。
+        """
+        from tools.m5_testset import MALE_TRANSPOSE
+        from tools.svc_defaults import SVC_TRANSPOSE_LOW_VOICE
+        self.assertEqual(float(MALE_TRANSPOSE), float(SVC_TRANSPOSE_LOW_VOICE))
+
+    def test_the_swept_transpose_is_the_value_the_rule_chose(self):
+        from tools.svc_defaults import SVC_TRANSPOSE_LOW_VOICE
+        self.assertEqual(SVC_TRANSPOSE_LOW_VOICE, 7.0)
 
     def test_svc_inference_defaults_to_the_chosen_steps(self):
         import inspect
