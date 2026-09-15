@@ -42,7 +42,7 @@ target singer の train 曲、同一 take、近重複 clip は test から除外
 |---|---|---|
 | pitch 保持 | F0 correlation、F0 RMSE、V/UV error | extractor 自身の誤りを別途監査する |
 | target similarity | speaker embedding cosine / SECS | **ECAPA-TDNN を 12 秒以上のクリップで使う**（下記の較正表）。encoder と長さの**両方**が要る |
-| intelligibility | CER（[`tools/asr_cer.py`](../tools/asr_cer.py)） | **`--language` を素材に合わせること**（VocalSet に `ja` を当てて全滅した）。**上限が判別不能なら差を出さない** |
+| intelligibility | CER（[`asr_cer.py`](../tools/asr_cer.py) + [`cer_breakdown.py`](../tools/cer_breakdown.py)） | **言語ごとに割ってから読む**（pooled の +16.8 点は言語の混合で、訂正後は日本語 +5 点前後 / 英語 +10〜19 点）。**上限中央が 10% を超える群には差を出さない**（ラテン語は上限自身が 23% 揃わない）。**変換側 CER が 100% を超えた clip は中央値に入れない**（ASR の暴走で、聞き取りにくさではない）。**上限は `--ceiling-from` で使い回すこと**（ボコーダーの乱数で run ごとに変わる） |
 | signal quality | SQUIM の STOI / PESQ / SI-SDR（[`tools/signal_quality.py`](../tools/signal_quality.py)） | **話し声で学習されている。** 絶対値ではなく上限との差だけを読む |
 | spectral | mel/STFT distance、MCD | parallel reference がある subset に限定 |
 | **音の明るさ** | **spectral centroid、帯域エネルギー比**（[`tools/audio_metrics.py`](../tools/audio_metrics.py)） | **source ではなく「GT mel をボコーダーに通した再合成」を上限の基準にする。** 内容・音高・V/UV の指標は高域の欠落を検知しない（M3 で実測） |
@@ -112,7 +112,7 @@ Seed-VC は 1 clip でしたが、**Seed-VC は CER と明るさを判定でき�
 | 音の明るさ・帯域 | [`audio_metrics.py`](../tools/audio_metrics.py) + 上限 | **ある** |
 | speaker similarity | [`speaker_similarity.py`](../tools/speaker_similarity.py) + [較正](../tools/speaker_calibrate.py) | **ある**（較正通過） |
 | **timing** | [`timing_metrics.py`](../tools/timing_metrics.py) | **作った**（下記の限界に注意） |
-| **CER（明瞭度）** | [`asr_cer.py`](../tools/asr_cer.py) | **作った**（日本語素材でのみ機能） |
+| **CER（明瞭度）** | [`asr_cer.py`](../tools/asr_cer.py) + [`cer_breakdown.py`](../tools/cer_breakdown.py) | **作った**（言語別に割って読む）。**系間比較は上限を共有してから**（2026-09-15） |
 | **信号品質** | [`signal_quality.py`](../tools/signal_quality.py) | **作った**（歌声への妥当性は未検証） |
 | **推論 RTF / peak VRAM** | [`rtf.py`](../tools/rtf.py) | **作った** |
 
