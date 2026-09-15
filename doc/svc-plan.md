@@ -513,8 +513,13 @@ SSL 50 Hz → mel 172.27 Hz の **left 整列**）を疑うなら、2 段目の�
 立っていました**。つまり**決定性の半分だけ**が入っていて、`use_deterministic_algorithms(True)`
 が呼ばれていませんでした。ただし今回の原因はそれではありません。
 
-**未実施:** **M5 の 26 clip を、共有の上限で変換し直すこと。** これをやって初めて
-`metrics_leapsvc` と `metrics_gan_*` を並べられます。
+**実施（2026-09-15）: 26 clip を共有の上限で変換し直しました。** 出力は
+`out/m5/leapsvc_1step_v31_shared/`（`ckpt_010000` / **1 step** / V3.1、
+`--ceiling-from out/m5/leapsvc_gan_v31`）。**上限は 26 本すべて bit 一致**しており、
+`convert.json` の `ceiling_comparable` は `true` です。**既存の成果物は上書きしていません。**
+
+比較の相手は `out/m5/leapsvc_gan_v31`（GAN `ckpt_015000` / **16 step** / V3.1）で、
+**ボコーダーと上限を揃えたうえで checkpoint と step 数だけを変えた対**になります。
 
 #### ③ の 1 の結論
 
