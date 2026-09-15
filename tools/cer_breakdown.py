@@ -41,6 +41,12 @@ CEILING_STABLE_MAX = 0.10
 # 中央値を 1 本や 2 本で出さない。**n=1 の +93.3 点を「イタリア語の劣化」と読まないため。**
 MIN_CLIPS = 3
 
+# 変換側の CER がこれを超えた clip は **書き起こしが暴走している**（挿入で長さが基準を
+# 超える）。「もっと聞き取れない」ではなく **ASR が別の文を生成した**ということなので、
+# 中央値には入れず、本数だけ数える。実測でイタリア語が 909% / 1733% を出し、
+# **上限側にしか門が無かったため「読める +897.7 点」として通りました。**
+CONVERTED_DEGENERATE_MIN = 1.0
+
 
 def clip_language(tag: str, *, piece: str | None) -> str:
     """clip の tag と楽曲名から言語を決める。
@@ -76,15 +82,23 @@ def _median(xs: Sequence[float]) -> float | None:
 def _group(clips: Sequence[dict[str, Any]]) -> dict[str, Any]:
     ceil = _median([c["cer_ceiling"] for c in clips])
     conv = _median([c["cer_converted"] for c in clips])
-    excess = _median([c["cer_excess_over_ceiling"] for c in clips])
+    # **暴走した書き起こしは中央値に入れず、本数を残す。** 黙って落とすと本数が減った
+    # ことに気づけないので、`n_degenerate` を必ず出す。
+    clean = [c for c in clips
+             if float(c["cer_converted"]) < CONVERTED_DEGENERATE_MIN]
+    excess = _median([c["cer_excess_over_ceiling"] for c in clean])
     reason = None
     if len(clips) < MIN_CLIPS:
         reason = "too_few_clips"
     elif ceil is None or ceil > CEILING_STABLE_MAX:
         reason = "ceiling_unstable"
+    elif not clean:
+        reason = "no_clean_clips"
     readable = reason is None
     return {
         "n": len(clips),
+        "n_clean": len(clean),
+        "n_degenerate": len(clips) - len(clean),
         "ceiling_median": ceil,
         "converted_median": conv,
         # **読めない群では差を出しません。** 数字が残ると必ず引用されます。
@@ -92,6 +106,7 @@ def _group(clips: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "readable": readable,
         "reason": reason,
         "ceiling_stable_max": CEILING_STABLE_MAX,
+        "converted_degenerate_min": CONVERTED_DEGENERATE_MIN,
         "min_clips": MIN_CLIPS,
     }
 
@@ -171,24 +186,27 @@ def main() -> int:
               f"  <- **言語が混ざっているので品質として読まないこと**")
     print(f"使用 {rep['n_used']} / 除外 {rep['n_dropped']}")
     print()
-    print("言語        本数   上限中央   変換中央   差の中央   判定")
+    print("言語        本数 暴走 上限中央   差の中央   判定")
     for lg, g in rep["per_language"].items():
         ex = f"{g['excess_median'] * 100:+6.1f} 点" if g["excess_median"] is not None else "   ――   "
         note = "読める" if g["readable"] else {
             "ceiling_unstable": f"上限が {g['ceiling_median'] * 100:.0f}% 揃わない",
-            "too_few_clips": f"本数不足（{g['n']} < {MIN_CLIPS}）"}[g["reason"]]
-        print(f"{LANG_JA.get(lg, lg):10s}  {g['n']:3d}    "
-              f"{(g['ceiling_median'] or 0) * 100:6.1f}%   "
-              f"{(g['converted_median'] or 0) * 100:6.1f}%   {ex}   {note}")
+            "too_few_clips": f"本数不足（{g['n']} < {MIN_CLIPS}）",
+            "no_clean_clips": "全 clip で書き起こしが暴走"}[g["reason"]]
+        print(f"{LANG_JA.get(lg, lg):10s}  {g['n']:3d} {g['n_degenerate']:3d}  "
+              f"{(g['ceiling_median'] or 0) * 100:6.1f}%   {ex}   {note}")
 
     read = {lg: g for lg, g in rep["per_language"].items() if g["readable"]}
     print()
     if read:
         print("**読める素材だけの差:** " + " / ".join(
-            f"{LANG_JA.get(lg, lg)} {g['excess_median'] * 100:+.1f} 点（n={g['n']}）"
+            f"{LANG_JA.get(lg, lg)} {g['excess_median'] * 100:+.1f} 点"
+            f"（健全 {g['n_clean']} / 全 {g['n']}）"
             for lg, g in read.items()))
     else:
         print("**読める素材がありません。** 差を報告できません")
+    print("  ** 「暴走」= 変換側の CER が 100% を超えた clip。挿入で長さが基準を超えており、"
+          "**聞き取りにくさではなく ASR が別の文を生成した**もの。中央値には入れない **")
     print("\n  ** 上限は「同じ内容を自分のボコーダーに通した再合成」。書き起こしが揃わない"
           "素材では、差は内容の劣化ではなく表記の揺れを拾う **")
 

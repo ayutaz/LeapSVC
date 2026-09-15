@@ -1711,6 +1711,39 @@ class CerBreakdownTests(unittest.TestCase):
         self.assertFalse(g["readable"])
         self.assertEqual(g["reason"], "too_few_clips")
 
+    def test_a_transcription_that_blew_up_is_not_counted_as_intelligibility(self):
+        # **CER > 100% は「もっと聞き取れない」ではなく書き起こしの暴走**です（挿入で
+        # 長さが膨らむ）。実測でイタリア語が 909% / 1733% を出し、中央値 +897.7 点が
+        # 「読める」判定で通りました。**上限側にしか門が無かったのが原因。**
+        from tools.cer_breakdown import breakdown
+        rep = breakdown(self._clips([("it", 0.044, 9.091), ("it", 0.0, 17.333),
+                                     ("it", 0.044, 1.0)]))
+        g = rep["per_language"]["it"]
+        self.assertEqual(g["n_degenerate"], 3)
+        self.assertIsNone(g["excess_median"])
+        self.assertEqual(g["reason"], "no_clean_clips")
+
+    def test_degenerate_clips_are_reported_not_dropped(self):
+        # **黙って落とすと本数が減ったことに気づけません。**
+        from tools.cer_breakdown import breakdown
+        clips = self._clips([("en", 0.0, 0.0), ("en", 0.0, 0.025), ("en", 0.0, 0.101),
+                             ("en", 0.0, 0.177), ("en", 0.0, 1.0), ("en", 0.0, 4.519)])
+        g = breakdown(clips)["per_language"]["en"]
+        self.assertEqual(g["n"], 6)
+        self.assertEqual(g["n_degenerate"], 2)
+        self.assertEqual(g["n_clean"], 4)
+        # 中央値は健全な 4 本だけ（0.0 / 2.5 / 10.1 / 17.7 -> 6.3 点）
+        self.assertAlmostEqual(g["excess_median"], 0.063, places=3)
+        self.assertTrue(g["readable"])
+
+    def test_a_group_with_no_degenerate_clips_keeps_every_clip(self):
+        from tools.cer_breakdown import breakdown
+        g = breakdown(self._clips([("ja", 0.0, 0.056), ("ja", 0.024, 0.095),
+                                   ("ja", 0.0, 0.097)]))["per_language"]["ja"]
+        self.assertEqual(g["n_degenerate"], 0)
+        self.assertEqual(g["n_clean"], 3)
+
+
     def test_the_pooled_median_is_reported_as_not_readable(self):
         # **混合の中央値を品質として出さない。** 出すが、読めない印を必ず付ける。
         from tools.cer_breakdown import breakdown
