@@ -562,6 +562,65 @@ class JaMaterialAuditTests(unittest.TestCase):
         self.assertEqual(rep["hash_mismatch"], [])
 
 
+class JaTestsetTests(unittest.TestCase):
+    """日本語 test set の構築。**学習に入った曲を絶対に混ぜないことが最優先の契約。**
+
+    手元の日本語 5 名は**全員 base に入っています**。作れるのは「**未知曲・既知話者**」
+    までで、**未知話者とは名乗れません**。曲の選別を間違えると、その区別すら失われます。
+    """
+
+    AUDIT = {"natsume": {"root": "download/natsume",
+                         "used_songs": ["1", "2"],
+                         "free_songs": ["36", "37"],
+                         "free_files": ["wav/36.wav", "wav/37.wav"]}}
+
+    def test_the_pool_only_contains_unused_songs(self):
+        from tools.ja_testset import pool_from_audit
+        pool = pool_from_audit(self.AUDIT, speaker="natsume", layout="flat",
+                               seconds=20.0, durations={"wav/36.wav": 60.0,
+                                                        "wav/37.wav": 60.0})
+        self.assertEqual(sorted(p["song"] for p in pool), ["36", "37"])
+
+    def test_a_used_song_can_never_enter_the_pool(self):
+        # free_files に学習済みの曲が紛れていたら落とす。**黙って通すと leakage します。**
+        from tools.ja_testset import pool_from_audit
+        bad = {"natsume": {**self.AUDIT["natsume"],
+                           "free_files": ["wav/1.wav", "wav/36.wav"]}}
+        with self.assertRaises(ValueError):
+            pool_from_audit(bad, speaker="natsume", layout="flat", seconds=20.0,
+                            durations={"wav/1.wav": 60.0, "wav/36.wav": 60.0})
+
+    def test_songs_shorter_than_the_clip_are_dropped(self):
+        from tools.ja_testset import pool_from_audit
+        pool = pool_from_audit(self.AUDIT, speaker="natsume", layout="flat",
+                               seconds=20.0, durations={"wav/36.wav": 10.0,
+                                                        "wav/37.wav": 60.0})
+        self.assertEqual([p["song"] for p in pool], ["37"])
+
+    def test_clips_below_the_similarity_minimum_are_refused(self):
+        # `speaker_similarity.py` は 12 秒未満のクリップを拒否します。
+        from tools.ja_testset import pool_from_audit
+        with self.assertRaises(ValueError):
+            pool_from_audit(self.AUDIT, speaker="natsume", layout="flat", seconds=6.0,
+                            durations={"wav/36.wav": 60.0, "wav/37.wav": 60.0})
+
+    def test_the_pool_records_what_it_is(self):
+        # **「未知話者」と名乗らない。** 層を記録に残す。
+        from tools.ja_testset import pool_from_audit
+        pool = pool_from_audit(self.AUDIT, speaker="natsume", layout="flat",
+                               seconds=20.0, durations={"wav/36.wav": 60.0})
+        self.assertEqual(pool[0]["speaker"], "natsume")
+        self.assertEqual(pool[0]["kind"], "unseen_song")
+        self.assertIn("seen_speaker", pool[0])
+        self.assertTrue(pool[0]["seen_speaker"])
+
+    def test_an_unknown_speaker_is_refused(self):
+        from tools.ja_testset import pool_from_audit
+        with self.assertRaises(ValueError):
+            pool_from_audit(self.AUDIT, speaker="kiritan", layout="flat", seconds=20.0,
+                            durations={})
+
+
 if __name__ == "__main__":
     unittest.main()
 
