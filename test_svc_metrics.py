@@ -1658,6 +1658,76 @@ class BlindSimilarityPageTests(unittest.TestCase):
         self.assertIsNone(tally(sheet)["question"])
 
 
+class CerBreakdownTests(unittest.TestCase):
+    """CER を言語ごとに分ける。**pooled の中央値は素材の混合を隠します。**
+
+    実測（M5、26 clip）: 公表値は差 **+16.8 点**でしたが、言語別に割ると
+    **日本語 +4.8 / 英語 +13.1 / ラテン語 +20.5 / イタリア語 +93.3（n=1）**でした。
+    **上限自身が 23.2% 揃わないラテン語**は、同じ音を片仮名と平仮名で書き起こしただけの
+    差を拾っています。**上限が不安定な素材で差を出してはいけません。**
+    """
+
+    @staticmethod
+    def _clips(lang_ceil_conv):
+        return [{"lang": lg, "cer_ceiling": ce, "cer_converted": cv,
+                 "cer_excess_over_ceiling": cv - ce, "ceiling_unusable": False,
+                 "asr_failed": False}
+                for lg, ce, cv in lang_ceil_conv]
+
+    def test_language_comes_from_the_piece_name(self):
+        from tools.cer_breakdown import clip_language
+        self.assertEqual(clip_language("holdout03", piece=None), "ja")
+        self.assertEqual(clip_language("unseen00", piece="dona"), "la")
+        self.assertEqual(clip_language("unseen01", piece="caro"), "it")
+        self.assertEqual(clip_language("unseen02", piece="row"), "en")
+
+    def test_an_unknown_piece_is_refused(self):
+        # 黙って ja や unknown に落とすと、**読めない素材が読めたことになります**。
+        from tools.cer_breakdown import clip_language
+        with self.assertRaises(ValueError):
+            clip_language("unseen00", piece="scales")
+
+    def test_a_readable_language_reports_the_excess(self):
+        from tools.cer_breakdown import breakdown
+        rep = breakdown(self._clips([("ja", 0.02, 0.07)] * 5))
+        g = rep["per_language"]["ja"]
+        self.assertTrue(g["readable"])
+        self.assertAlmostEqual(g["excess_median"], 0.05, places=6)
+
+    def test_an_unstable_ceiling_gets_no_excess(self):
+        # 上限は「同じ内容を自分のボコーダーに通したもの」。書き起こしが揃わない素材では、
+        # **差は内容の劣化ではなく表記の揺れ**です。
+        from tools.cer_breakdown import breakdown
+        rep = breakdown(self._clips([("la", 0.23, 0.52)] * 6))
+        g = rep["per_language"]["la"]
+        self.assertFalse(g["readable"])
+        self.assertIsNone(g["excess_median"])
+        self.assertEqual(g["reason"], "ceiling_unstable")
+
+    def test_too_few_clips_gets_no_excess(self):
+        from tools.cer_breakdown import breakdown
+        rep = breakdown(self._clips([("it", 0.067, 1.0)]))
+        g = rep["per_language"]["it"]
+        self.assertFalse(g["readable"])
+        self.assertEqual(g["reason"], "too_few_clips")
+
+    def test_the_pooled_median_is_reported_as_not_readable(self):
+        # **混合の中央値を品質として出さない。** 出すが、読めない印を必ず付ける。
+        from tools.cer_breakdown import breakdown
+        rep = breakdown(self._clips([("ja", 0.02, 0.07)] * 3 + [("la", 0.23, 0.52)] * 6))
+        self.assertIn("pooled", rep)
+        self.assertFalse(rep["pooled"]["readable"])
+        self.assertIn("言語", rep["pooled"]["reason_ja"])
+
+    def test_clips_the_tool_already_rejected_are_not_counted(self):
+        from tools.cer_breakdown import breakdown
+        clips = self._clips([("ja", 0.02, 0.07)] * 3)
+        clips.append({"lang": "ja", "cer_ceiling": 1.0, "cer_converted": 0.2,
+                      "cer_excess_over_ceiling": None, "ceiling_unusable": True,
+                      "asr_failed": False})
+        self.assertEqual(breakdown(clips)["per_language"]["ja"]["n"], 3)
+
+
 class SpeakerSimilarityCollectionTests(unittest.TestCase):
     """どの WAV を「変換結果」として数えるか。**ここを間違えると別種のファイルを比べる。**"""
 
