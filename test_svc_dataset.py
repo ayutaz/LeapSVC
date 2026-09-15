@@ -477,6 +477,91 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual([n for n in placed if n.startswith("song00")], [])
 
 
+class JaMaterialAuditTests(unittest.TestCase):
+    """日本語素材の棚卸し。**「学習に入っていない曲」を曲単位で出す。**
+
+    base の 23 話者には**日本語 5 名が全員入っています**（`JA_Soprano_1` / `JA_Tenor_1` /
+    `natsume` / `oniku` / `ritsu`）。未知話者は作れないので、作れるのは **「未知曲」**
+    までです。**曲単位で漏れなく判定しないと leakage します。**
+
+    GTSinger のパスは `<技法>/<曲>/<Group>/NNNN.wav` で、**同じ曲が複数の技法の下に
+    出ます**。どれか 1 つでも学習に入っていれば、その曲は使えません。
+    """
+
+    def test_song_comes_from_the_second_path_component(self):
+        from tools.ja_material_audit import song_of
+        self.assertEqual(song_of("Breathy/Heartful Song/Breathy_Group/0000.wav"),
+                         "heartful song")
+
+    def test_song_names_are_folded(self):
+        # **既知の落とし穴**: `Heartful_Song` と `Heartful_song` が別の曲になると split が効かない。
+        from tools.ja_material_audit import song_of
+        a = song_of("Breathy/Heartful_Song/G/0.wav")
+        b = song_of("Glissando/Heartful song/G/1.wav")
+        self.assertEqual(a, b)
+
+    def test_flat_layouts_take_the_song_from_the_file(self):
+        # UTAU DB は **1 ファイル = 1 曲**（`wav/1.wav` / `akai_kutsu/akai_kutsu.wav` /
+        # `DATABASE/<曲>/<曲>.wav`）。GTSinger の規則を当てると曲を取り違えます。
+        from tools.ja_material_audit import song_of
+        self.assertEqual(song_of("wav/1.wav", layout="flat"), "1")
+        self.assertEqual(song_of("akai_kutsu/akai_kutsu.wav", layout="flat"), "akai kutsu")
+        self.assertEqual(song_of("DATABASE/ARROW+3_normal/ARROW+3_normal.wav",
+                                 layout="flat"), "arrow+3 normal")
+
+    def test_the_layout_must_be_known(self):
+        # **黙って既定に落とすと曲を取り違えて leakage します。**
+        from tools.ja_material_audit import song_of
+        with self.assertRaises(ValueError):
+            song_of("wav/1.wav", layout="なんとなく")
+
+    def test_audit_passes_the_layout_through(self):
+        from tools.ja_material_audit import audit
+        rep = audit(used=["wav/1.wav"], disk=["wav/1.wav", "wav/2.wav"], layout="flat")
+        self.assertEqual(rep["used_songs"], ["1"])
+        self.assertEqual(rep["free_songs"], ["2"])
+
+    def test_a_song_used_under_any_technique_is_contaminated(self):
+        # 1 つの技法でも学習に入っていれば、その曲は test に使えない。
+        from tools.ja_material_audit import audit
+        rep = audit(used=["Breathy/S1/G/0000.wav"],
+                    disk=["Breathy/S1/G/0000.wav", "Glissando/S1/G/0000.wav",
+                          "Breathy/S2/G/0000.wav"])
+        self.assertEqual(rep["used_songs"], ["s1"])
+        self.assertEqual(rep["free_songs"], ["s2"])
+
+    def test_files_are_matched_by_relative_path_not_by_name(self):
+        # **連番は曲ごとに振り直されます**（どの曲にも 0000.wav がある）。名前で照合すると
+        # 全部が「学習済み」に見えます。実際にこれで数を間違えました。
+        from tools.ja_material_audit import audit
+        rep = audit(used=["Breathy/S1/G/0000.wav"],
+                    disk=["Breathy/S1/G/0000.wav", "Breathy/S2/G/0000.wav"])
+        self.assertEqual(rep["free_songs"], ["s2"])
+        self.assertEqual(rep["n_free_files"], 1)
+
+    def test_files_in_the_manifest_but_not_on_disk_are_reported(self):
+        # **黙って無視すると、学習素材が欠けていることに気づけません。**
+        from tools.ja_material_audit import audit
+        rep = audit(used=["Breathy/S1/G/0000.wav", "Breathy/S1/G/0001.wav"],
+                    disk=["Breathy/S1/G/0000.wav"])
+        self.assertEqual(rep["missing_from_disk"], ["Breathy/S1/G/0001.wav"])
+
+    def test_hash_mismatches_are_reported(self):
+        # 手元の素材が学習に使ったものと同じであることを確かめる。
+        from tools.ja_material_audit import audit
+        rep = audit(used={"Breathy/S1/G/0000.wav": "aa"},
+                    disk=["Breathy/S1/G/0000.wav", "Breathy/S2/G/0000.wav"],
+                    disk_hashes={"Breathy/S1/G/0000.wav": "bb"})
+        self.assertEqual(rep["hash_mismatch"], ["Breathy/S1/G/0000.wav"])
+
+    def test_matching_hashes_are_not_reported(self):
+        from tools.ja_material_audit import audit
+        rep = audit(used={"Breathy/S1/G/0000.wav": "aa"},
+                    disk=["Breathy/S1/G/0000.wav"],
+                    disk_hashes={"Breathy/S1/G/0000.wav": "aa"})
+        self.assertEqual(rep["hash_mismatch"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -57,6 +57,7 @@
 | [`tools/cer_breakdown.py`](../tools/cer_breakdown.py) / `out/m5/metrics_*/cer_breakdown.json` | **CER の言語別分解**。pooled の +16.8 点は言語の混合で、訂正後は**日本語 +5 点前後 / 英語 +10〜19 点**。**上限中央が 10% を超える群と 3 本未満の群には差を出さない** |
 | `out/m5/metrics_{gan,gan_v31}_fixed/cer.json` | 採用中の系（GAN `ckpt_015000` / 16 step）の CER を V3 と V3.1 で測ったもの。**上限が run ごとに変わるため系間比較には使えない** |
 | `out/m5/leapsvc_1step_v31_shared/`、`out/m5/metrics_1step_v31_shared/` | **共有の上限で変換し直したもの**（`--ceiling-from`）と、その測定。**上限は 26 本すべて bit 一致**し `ceiling_comparable` が `true`。**上限 CER の食い違いは 0 / 26** で、読める素材では **GAN + 16 step が明瞭度を変えていない**（+9.9 → +9.9 点、改善 3 / 悪化 4 / 同じ 7） |
+| [`tools/ja_material_audit.py`](../tools/ja_material_audit.py) / `out/ja_audit/` | **日本語素材の曲単位の棚卸し**（2026-09-16）。**GTSinger 日本語 2 名は未使用曲ゼロ**（`--max-hours` が各曲から間引くため全曲が汚染）、**使えるのは `natsume` 22 曲 + `oniku` 28 曲だけ**。`JA_Tenor_1` は**学習素材 78 本が手元に無い** |
 | [`doc/svc-content-encoder.md`](svc-content-encoder.md) / [`doc/svc-dataset-ledger.md`](svc-dataset-ledger.md) | encoder 選定と M0 台帳 |
 | [`pyproject.toml`](../pyproject.toml) / [`uv.lock`](../uv.lock) / `.python-version` | Python 3.13 固定、CUDA wheel index、依存の解決結果 |
 | [`CLAUDE.md`](../CLAUDE.md) | コマンド、共有スタック、データ契約、既知の落とし穴 |

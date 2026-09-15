@@ -175,7 +175,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 ### 確認済み
 
 - ボコーダーは **NHVSing V3.1**（`checkpoints/nhv_v3_1.onnx`。2026-09-13 に上流から取り込み）。**M5 の測定値は V3 で取ったもの**なので、V3.1 で測り直した値と混ぜないこと。
-- 自動テスト **472 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 63 / `test_svc_metrics` 237）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **482 件**が成功（`test_svc_model` 57 / `test_svc_preprocess` 115 / `test_svc_dataset` 73 / `test_svc_metrics` 237）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **55 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。
@@ -450,15 +450,20 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 14. ~~M5 の 26 clip を共有の上限で変換し直す~~ — **完了（2026-09-15）。**
     `out/m5/leapsvc_1step_v31_shared/`（`ckpt_010000` / 1 step / V3.1）。**上限は 26 本すべて
     bit 一致**し、`ceiling_comparable` は `true`。これで系間比較が成立する。
-15. **男声 source の transpose 掃引**（**次にやること**。+5 / +7 / +9 / +12。**再学習なし**。
-    明瞭度が最も崩れる条件。上限が揃ったので判定できる）。
-16. **案 B: base から GAN 付きで学習し直す**（条件付きトラック C の残り。8〜12 時間。**要ユーザー判断**）。
-17. ~~ボコーダーの実行経路の実測~~ / ~~streaming student~~ — **後回し（2026-09-14 決定）。**
+15. ~~日本語素材の棚卸し~~ — **完了（2026-09-16）。** `tools/ja_material_audit.py`。
+    **日本語 5 名は全員 base に入っており、未知話者は作れない。** GTSinger 日本語 2 名は
+    **未使用曲ゼロ**、使えるのは `natsume` 22 曲 + `oniku` 28 曲だけ。
+16. **日本語の test set を作る**（**次にやること**。`natsume` / `oniku` の未使用曲。
+    層は「**未知曲・既知話者**」。未知話者が要るなら東北きりたん / No.7 の取得）。
+17. **低音 source の transpose 掃引**（`natsume`、+0 / +7 / +9 / +12。**再学習なし**。
+    理論値は **+9.7 半音**で、いまの既定 +12 は行き過ぎの可能性）。
+18. **案 B: base から GAN 付きで学習し直す**（条件付きトラック C の残り。8〜12 時間。**要ユーザー判断**）。
+19. ~~ボコーダーの実行経路の実測~~ / ~~streaming student~~ — **後回し（2026-09-14 決定）。**
     **M6 は直列経路から外し、品質が十分になってから**着手します（must ではありません）。
     着手するときの最初の作業は蒸留ではなく**ボコーダーの実行経路の測定**です
     （[起動条件](svc-plan.md#m6-streaming-student)）。
 
-14〜16 の位置づけと推奨順は [実行計画](svc-plan.md#2b-ここからの計画) の 2b 節にあります。
+16〜18 の位置づけと推奨順は [実行計画](svc-plan.md#2b-ここからの計画) の 2b 節にあります。
 
 ## 7. ブランチと作業ツリー
 
