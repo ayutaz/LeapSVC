@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -51,6 +52,60 @@ def output_stem(wav_path: str, *, tag: str | None) -> str:
     if not tag:
         return stem
     return f"{stem}__{_TAG_SAFE.sub('_', str(tag))}"
+
+
+# `torch.use_deterministic_algorithms(True)` を CUDA で使うときに要る値（torch の要求）。
+_CUBLAS_OK = (":4096:8", ":16:8")
+
+
+def deterministic_env_error(device: str, env) -> str | None:
+    """決定的モードを CUDA で使うのに環境変数が足りないなら、その説明を返す。
+
+    **変換を走らせてから torch に落とされないため、起動時に確かめます。**
+    CPU は既定で決定的なので何も要りません。
+    """
+    if not str(device).startswith("cuda"):
+        return None
+    v = dict(env).get("CUBLAS_WORKSPACE_CONFIG")
+    if v in _CUBLAS_OK:
+        return None
+    return ("--deterministic を CUDA で使うには CUBLAS_WORKSPACE_CONFIG が要ります"
+            f"（{' か '.join(_CUBLAS_OK)}。いまは {v!r}）。"
+            "これが無いと torch が実行時に落ちます")
+
+
+def provenance(*, ckpt: str, vocoder: str, device: str, deterministic: bool,
+               env, ceiling_from: str | None = None) -> dict:
+    """上限が比べられるかを判断するための記録。
+
+    **NHVSing の ONNX は seed 属性の無い `RandomNormalLike` を持っています**
+    （`node_randn_like`。属性は `scale` と `mean` だけ）。ONNX Runtime は毎回別の乱数を
+    引くので、**ボコーダーを通した出力は run ごとに必ず変わります** ―― 上限も変換結果も
+    です。**device も `use_deterministic_algorithms` も関係ありません**（CPU + 決定的モードの
+    2 回の run で sha256 が一致しないことを実測しました）。
+
+    これが、同じ V3 ボコーダーの 2 つの run で **26 clip 中 6 本の上限 CER が 5 点を超えて
+    ずれた**（最大 88 点）本当の原因です。当初は CUDA の非決定性を疑いましたが誤りでした。
+
+    **唯一の対処は、上限を 1 度だけ作って系をまたいで使い回すことです**（`ceiling_from`）。
+    `ceiling_comparable` が False の記録どうしは、**上限が違うので「上限との差」を
+    比べられません**。
+    """
+    cublas = dict(env).get("CUBLAS_WORKSPACE_CONFIG")
+    return {
+        "ckpt": ckpt,
+        # **ボコーダーを記録する。** 変わると上限が変わるのに、記録が無かった。
+        "vocoder": vocoder,
+        "device": device,
+        # acoustic 側（flow と特徴抽出）だけを決定的にする。**出力 WAV は
+        # ボコーダーの乱数があるので、これでも bit 一致しません。**
+        "deterministic": bool(deterministic),
+        "cublas_workspace_config": cublas,
+        # NHVSing の性質。**seed を渡す口が無い**ので、事実として記録しておく。
+        "vocoder_stochastic": True,
+        "ceiling_source": str(ceiling_from) if ceiling_from else "generated",
+        "ceiling_comparable": bool(ceiling_from),
+    }
 
 
 def main() -> int:
@@ -84,7 +139,24 @@ def main() -> int:
     ap.add_argument("--content-model", default="lengyue233/content-vec-best")
     ap.add_argument("--layer", type=int, default=12)
     ap.add_argument("--vocoder", default="checkpoints/nhv_v3_1.onnx")
+    ap.add_argument("--ceiling-from", default=None,
+                    help="**上限（`*_vocoder_only.wav`）を作り直さず、このディレクトリから"
+                         "使い回す。** NHVSing は seed の無い RandomNormalLike を持つので、"
+                         "上限は作るたびに変わります（実測で上限 CER が 26 clip 中 6 本、"
+                         "最大 88 点ずれた）。**系を比べる測定では必ず指定すること**")
+    ap.add_argument("--deterministic", action="store_true",
+                    help="acoustic 側（特徴抽出と flow）を決定的にする。**出力 WAV は"
+                         "これでも bit 一致しません** ―― NHVSing が seed の無い乱数を"
+                         "持つためで、上限を揃えるには --ceiling-from が要ります。"
+                         "CUDA では CUBLAS_WORKSPACE_CONFIG=:4096:8 も必要")
     a = ap.parse_args()
+
+    # **`CUBLAS_WORKSPACE_CONFIG` はこの module の import 時に既に立てています**（上部）。
+    # ただし**それだけでは決定的になりません** ―― `use_deterministic_algorithms(True)` が
+    # 要ります。片方だけ入っていたのが、上限が run ごとに変わっていた原因です。
+    err = deterministic_env_error(a.device, os.environ) if a.deterministic else None
+    if err:
+        sys.exit(err)
 
     import soundfile as sf
 
@@ -97,6 +169,12 @@ def main() -> int:
     mel = MelSpec()
     out_dir = Path(a.out); out_dir.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(Path(a.manifest).read_text(encoding="utf-8"))
+    if a.deterministic:
+        import torch
+
+        torch.use_deterministic_algorithms(True)
+        print("[convert] --deterministic: acoustic 側を決定的にします"
+              "（**ボコーダーの乱数は残るので出力 WAV は bit 一致しません**）", flush=True)
     model, cfg = load_acoustic(a.ckpt, device=a.device)
     if not 0 <= a.spk_id < max(1, int(cfg.get("n_speakers", 1))):
         sys.exit(f"spk_id {a.spk_id} は 0..{cfg.get('n_speakers', 1) - 1} の範囲外です")
@@ -161,13 +239,30 @@ def main() -> int:
     _p = float(np.abs(wav).max())
     sf.write(out_dir / f"{stem}_source.wav",
              (wav / _p * 0.95).astype(np.float32) if _p > 1e-6 else wav, mel.sr)
-    report = {"wav": str(a.wav), "ckpt": a.ckpt, "spk_id": a.spk_id, "num_steps": a.num_steps,
+    report = {"wav": str(a.wav), "spk_id": a.spk_id, "num_steps": a.num_steps,
+              **provenance(ckpt=a.ckpt, vocoder=a.vocoder, device=a.device,
+                           deterministic=a.deterministic, env=os.environ,
+                           ceiling_from=a.ceiling_from),
               "seconds": len(wav) / mel.sr, "elapsed_sec": round(time.time() - t0, 1),
               "source": band_profile(wav, mel.sr), "converted": band_profile(conv, mel.sr)}
-    if gt_pieces:
-        gt = np.concatenate(gt_pieces).astype(np.float32)
-        sf.write(out_dir / f"{stem}_vocoder_only.wav", gt, mel.sr)
-        report["vocoder_only"] = band_profile(gt, mel.sr)
+    if a.self_check:
+        dst = out_dir / f"{stem}_vocoder_only.wav"
+        if a.ceiling_from:
+            # **作り直さずに使い回す。** ボコーダーの乱数で毎回変わるため。
+            src_ceil = Path(a.ceiling_from) / dst.name
+            if not src_ceil.exists():
+                sys.exit(f"--ceiling-from に {dst.name} がありません（{src_ceil}）。"
+                         "**黙って作り直すと、系をまたいで別の上限を比べることになります**")
+            shutil.copyfile(src_ceil, dst)
+            gt, _ = sf.read(str(dst), dtype="float32", always_2d=False)
+            print(f"[convert] 上限を使い回しました: {src_ceil}", flush=True)
+        else:
+            gt = np.concatenate(gt_pieces).astype(np.float32)
+            sf.write(dst, gt, mel.sr)
+            print("[convert] **注意: この上限は作り直したものです。** NHVSing の乱数で "
+                  "run ごとに変わるので、**系を比べる測定には使えません**"
+                  "（--ceiling-from で使い回すこと）", flush=True)
+        report["vocoder_only"] = band_profile(np.asarray(gt, dtype=np.float32), mel.sr)
     (out_dir / f"{stem}_convert.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
 

@@ -1761,6 +1761,72 @@ class CerBreakdownTests(unittest.TestCase):
         self.assertEqual(breakdown(clips)["per_language"]["ja"]["n"], 3)
 
 
+class SvcConvertProvenanceTests(unittest.TestCase):
+    """変換の記録。**上限（`*_vocoder_only.wav`）が比べられるかを json が自分で申告する。**
+
+    上限は GT mel だけでなく **RMVPE の F0 と UV にも依存**します
+    （`mel_to_wav(vocoder, feats["mel"], logf0, feats["uv"])`）。CUDA では両方とも
+    既定で bit 再現しないので、**同じ V3 の 2 つの run で 26 clip 中 6 本の上限 CER が
+    5 点を超えてずれました**（最大 88 点）。`convert.json` は**どのボコーダーを使ったかも
+    記録していませんでした** ―― 上限が比較できない原因そのものです。
+    """
+
+    def test_the_vocoder_is_recorded(self):
+        # ボコーダーが変わると上限が変わる。**記録が無いと後から判別できません。**
+        from tools.svc_convert import provenance
+        p = provenance(ckpt="a.pt", vocoder="checkpoints/nhv_v3_1.onnx",
+                       device="cpu", deterministic=False, env={})
+        self.assertEqual(p["vocoder"], "checkpoints/nhv_v3_1.onnx")
+
+    def test_a_freshly_generated_ceiling_is_never_comparable(self):
+        """**ボコーダーが確率的なので、作り直した上限は必ず変わります。**
+
+        当初は CUDA の非決定性を疑いましたが、**CPU + `use_deterministic_algorithms`
+        でも 2 回の run で上限の sha256 が一致しませんでした**。原因は NHVSing の ONNX に
+        **seed 属性の無い `RandomNormalLike`** があることで、ONNX Runtime が毎回別の乱数を
+        引きます。**device も決定的モードも関係ありません。**
+        """
+        from tools.svc_convert import provenance
+        for device, det in (("cpu", True), ("cpu", False), ("cuda", True)):
+            p = provenance(ckpt="a.pt", vocoder="v.onnx", device=device,
+                           deterministic=det, env={"CUBLAS_WORKSPACE_CONFIG": ":4096:8"})
+            self.assertFalse(p["ceiling_comparable"], f"{device}/{det}")
+            self.assertEqual(p["ceiling_source"], "generated")
+
+    def test_a_reused_ceiling_is_comparable(self):
+        # **1 度だけ作って共有する**のが唯一の対処。系をまたいで同じ上限を使う。
+        from tools.svc_convert import provenance
+        p = provenance(ckpt="a.pt", vocoder="v.onnx", device="cuda", deterministic=False,
+                       env={}, ceiling_from="out/m5/ceiling")
+        self.assertTrue(p["ceiling_comparable"])
+        self.assertEqual(p["ceiling_source"], "out/m5/ceiling")
+
+    def test_the_vocoder_being_stochastic_is_recorded(self):
+        from tools.svc_convert import provenance
+        p = provenance(ckpt="a.pt", vocoder="v.onnx", device="cpu",
+                       deterministic=True, env={})
+        self.assertTrue(p["vocoder_stochastic"])
+
+    def test_deterministic_on_cuda_needs_the_cublas_env(self):
+        # 環境変数が無いと torch が実行時に落ちる。**変換を 30 分走らせてから落ちないこと。**
+        from tools.svc_convert import deterministic_env_error
+        self.assertIsNotNone(deterministic_env_error("cuda", {}))
+        self.assertIn("CUBLAS_WORKSPACE_CONFIG", deterministic_env_error("cuda", {}))
+
+    def test_the_documented_cublas_values_pass(self):
+        from tools.svc_convert import deterministic_env_error
+        for v in (":4096:8", ":16:8"):
+            self.assertIsNone(deterministic_env_error("cuda", {"CUBLAS_WORKSPACE_CONFIG": v}))
+
+    def test_cpu_needs_no_env(self):
+        from tools.svc_convert import deterministic_env_error
+        self.assertIsNone(deterministic_env_error("cpu", {}))
+
+    def test_a_wrong_cublas_value_is_refused(self):
+        from tools.svc_convert import deterministic_env_error
+        self.assertIsNotNone(deterministic_env_error("cuda", {"CUBLAS_WORKSPACE_CONFIG": "1"}))
+
+
 class SpeakerSimilarityCollectionTests(unittest.TestCase):
     """どの WAV を「変換結果」として数えるか。**ここを間違えると別種のファイルを比べる。**"""
 
