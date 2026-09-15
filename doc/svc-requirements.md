@@ -6,6 +6,14 @@
 
 最終的な狙いはリアルタイム利用ですが、最初に高品質な offline teacher を完成させ、比較評価を通過してから streaming student を作ります。
 
+**決定（2026-09-14）: streaming（Gate C / M6）は直列経路から外し、起動条件つきにしました。**
+must ではありません。起動条件は「同一 test set の blind comparison で preference が baseline を
+上回り、guard rail を 1 つも落としていないこと」です（[実行計画](svc-plan.md#m6-streaming-student)）。
+
+**確認済み（2026-09-01）: 着手するときの最初の作業は蒸留ではありません。** GPU の end-to-end
+RTF 0.464 のうち **ボコーダーが 0.432（93%）**で、acoustic は 0.006 です。**蒸留は lookahead
+（遅延）に効き、RTF（処理量）には効きません。**
+
 ## 2. 必須要件
 
 - source WAV から content、F0、V/UV、loudness を抽出できること。

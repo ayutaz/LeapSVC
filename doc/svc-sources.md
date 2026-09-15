@@ -51,6 +51,12 @@
 | `out/gan/eval_full.json` | 8 checkpoint の評価と**事前登録した規則による選定**（`ckpt_015000`） |
 | `out/m5/metrics_gan/`、`out/m5/guard_rail_gan.json` | GAN 版での M5 再測定と guard rail 判定 |
 | `out/m5/blind/` | blind preference の材料（26 ペア、**音量を揃えた**もの）と聴取ページ `listen.html`、参照音声 `context/`（target 本人の録音 + 各ペアの変換元 26 本）。**投票済み（26/26）**。結果は `result.json`（25 判定中 21 が Seed-VC）。`defects.csv` は defect の名付け 6 本（5 本が「音量が揺れる」） |
+| `out/m5/metrics_*_fixed/similarity.json` | **話者類似度の訂正後の値**（上限の混入を除いたもの）。旧値は `metrics_*/similarity.json` |
+| `out/m5/metrics_gan_v31_fixed/`、`out/m5/guard_rail_v31.json` | **V3.1 での再測定**（追跡指標では改善が出ない） |
+| `out/m5/blind_sim/` | **target 類似の blind**（①、2026-09-15）。26 ペア・seed 7 で振り直し、参照は target 本人 30 秒 + 変換元。**6/12 で中断し判定に至らず**（`result.json`。判定 4 票すべてが「後に聴いた側」、`sides` と `p_side` に記録） |
+| [`tools/cer_breakdown.py`](../tools/cer_breakdown.py) / `out/m5/metrics_*/cer_breakdown.json` | **CER の言語別分解**。pooled の +16.8 点は言語の混合で、訂正後は**日本語 +5 点前後 / 英語 +10〜19 点**。**上限中央が 10% を超える群と 3 本未満の群には差を出さない** |
+| `out/m5/metrics_{gan,gan_v31}_fixed/cer.json` | 採用中の系（GAN `ckpt_015000` / 16 step）の CER を V3 と V3.1 で測ったもの。**上限が run ごとに変わるため系間比較には使えない** |
+| `out/m5/leapsvc_1step_v31_shared/` | **共有の上限で変換し直したもの**（`--ceiling-from`）。`convert.json` の `ceiling_comparable` が `true` |
 | [`doc/svc-content-encoder.md`](svc-content-encoder.md) / [`doc/svc-dataset-ledger.md`](svc-dataset-ledger.md) | encoder 選定と M0 台帳 |
 | [`pyproject.toml`](../pyproject.toml) / [`uv.lock`](../uv.lock) / `.python-version` | Python 3.13 固定、CUDA wheel index、依存の解決結果 |
 | [`CLAUDE.md`](../CLAUDE.md) | コマンド、共有スタック、データ契約、既知の落とし穴 |
