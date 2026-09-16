@@ -155,7 +155,7 @@ F0の抽出にはRMVPEを使います（RMVPEはマルチプロセスで動か�
 - `nhv_v3_2.onnx` — hop size256のmelとF0を受け取ります。
 - `nhv_v3_2x.onnx` — hop size512のmelとF0を受け取ります。
 
-同梱しているのは **V3.2** です（高音域でフレーム単位に波形が急激に弱まる現象を、LTV フィルタの重ね合わせを Hann 窓化して解消した最新のウェイト。入出力の契約は V3.1 と同一なので差し替えるだけで使えます。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
+同梱しているのは **V3.2** です（高音域でフレーム単位に波形が急激に弱まる現象を、LTV フィルタの重ね合わせを Hann 窓化して解消した最新のウェイト。入出力の仕様は V3.1 と同一なので差し替えるだけで使えます。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
 
 ## オプション
 
