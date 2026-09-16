@@ -35,7 +35,7 @@ train = [
 
 # Notes:
 # - F0 extraction uses RMVPE (a neural pitch estimator). See README for the weight download.
-# - The vocoder (mel -> waveform) is bundled as an ONNX (checkpoints/nhv_v3_1.onnx) and run via
+# - The vocoder (mel -> waveform) is bundled as an ONNX (checkpoints/nhv_v3_2.onnx) and run via
 #   onnxruntime — self-contained, no external dependency.
 # - The duration model and F0 model are published in separate repositories; LeapSinger
 #   consumes raw duration + F0 as input.

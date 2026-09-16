@@ -152,10 +152,10 @@ The notebook exports the acoustic model to a single ONNX and runs it end to end 
 
 Two NHVSing vocoders are bundled under `checkpoints/`.
 
-- `nhv_v3_1.onnx` — takes a hop-size-256 mel and F0.
-- `nhv_v3_1x.onnx` — takes a hop-size-512 mel and F0.
+- `nhv_v3_2.onnx` — takes a hop-size-256 mel and F0.
+- `nhv_v3_2x.onnx` — takes a hop-size-512 mel and F0.
 
-The bundled version is **V3.1** — the latest weights, fixing the harmonic smearing on long inputs and the faint high-frequency stripes (see [NHVSing](https://github.com/wavtechyukky/NHVSing/) for details).
+The bundled version is **V3.2** — the latest weights. It fixes an abrupt per-frame weakening of the waveform at high pitch by switching the LTV filter's overlap-add to a Hann window. The input/output contract is identical to V3.1, so it is a drop-in replacement (see [NHVSing](https://github.com/wavtechyukky/NHVSing/) for details).
 
 ## Options
 
@@ -171,7 +171,7 @@ The bundled version is **V3.1** — the latest weights, fixing the harmonic smea
 
 ## License
 
-The code is MIT (`LICENSE`). However, the bundled vocoder ONNX files (`checkpoints/nhv_v3_1*.onnx`), the trained models distributed via Releases, and the singing databases used to train them are **not** covered by MIT — they follow their own licenses and terms of use (see the Acknowledgments below and `CREDITS.txt` in the model release).
+The code is MIT (`LICENSE`). However, the bundled vocoder ONNX files (`checkpoints/nhv_v3_2*.onnx`), the trained models distributed via Releases, and the singing databases used to train them are **not** covered by MIT — they follow their own licenses and terms of use (see the Acknowledgments below and `CREDITS.txt` in the model release).
 
 ## Acknowledgments
 

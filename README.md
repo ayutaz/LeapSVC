@@ -83,7 +83,7 @@ Python 3.10 以上。リポジトリを clone して editable install します�
     pip install -e ".[train,export]"  # 全部入り
 
 - **PyTorch** は環境に合わせて入れるのが確実です（CPU版 / CUDA版）。GPU で学習するなら [PyTorch 公式](https://pytorch.org/) の手順で CUDA 版を入れてください。
-- **F0抽出（RMVPE）** の重みは初回実行時に自動ダウンロードされます（HuggingFace → `preprocess/algorithms/rmvpe.pt`）。
+- **F0抽出（RMVPE）** のウェイトは初回実行時に自動ダウンロードされます（HuggingFace → `preprocess/algorithms/rmvpe.pt`）。
 - **ボコーダー（NHVSing）** は `checkpoints/` に ONNX 同梱済みで、追加ダウンロード不要です。
 - 学習・配布用の**音響モデル本体は Release で配布**しています（リポには含みません）。
 
@@ -152,10 +152,10 @@ F0の抽出にはRMVPEを使います（RMVPEはマルチプロセスで動か�
 
 `checkpoints/` に NHVSing ボコーダーを2つ同梱しています。
 
-- `nhv_v3_1.onnx` — hop size256のmelとF0を受け取ります。
-- `nhv_v3_1x.onnx` — hop size512のmelとF0を受け取ります。
+- `nhv_v3_2.onnx` — hop size256のmelとF0を受け取ります。
+- `nhv_v3_2x.onnx` — hop size512のmelとF0を受け取ります。
 
-同梱しているのは **V3.1** です（長尺入力での倍音の滲みと、高域のかすかな縞を修正した最新の重み。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
+同梱しているのは **V3.2** です（高音域でフレーム単位に波形が急激に弱まる現象を、LTV フィルタの重ね合わせを Hann 窓化して解消した最新のウェイト。入出力の契約は V3.1 と同一なので差し替えるだけで使えます。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
 
 ## オプション
 
@@ -171,7 +171,7 @@ F0の抽出にはRMVPEを使います（RMVPEはマルチプロセスで動か�
 
 ## ライセンス
 
-コードは MIT です（`LICENSE`）。ただし、同梱のボコーダー ONNX（`checkpoints/nhv_v3_1*.onnx`）、および Release で配布する学習済みモデルとその学習に使った歌声データベースは MIT の対象外で、それぞれのライセンス・規約に従います（下の謝辞、およびモデル配布物の `CREDITS.txt` を参照）。
+コードは MIT です（`LICENSE`）。ただし、同梱のボコーダー ONNX（`checkpoints/nhv_v3_2*.onnx`）、および Release で配布する学習済みモデルとその学習に使った歌声データベースは MIT の対象外で、それぞれのライセンス・規約に従います（下の謝辞、およびモデル配布物の `CREDITS.txt` を参照）。
 
 ## 謝辞
 
