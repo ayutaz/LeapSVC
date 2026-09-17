@@ -225,7 +225,9 @@ def main() -> int:
         pred = infer_svc_mel(model, item, num_steps=a.num_steps, device=a.device)
         logf0 = np.log2(np.maximum(feats["f0_hz"], 1.0))
         pieces.append(mel_to_wav(vocoder, pred, logf0, feats["uv"]))
-        if a.self_check:
+        # **上限を使い回すときは作らない。** ボコーダーは最も重い段（GPU でも合計 RTF の
+        # 93%）なので、捨てる音を合成するのは丸損です。
+        if a.self_check and not a.ceiling_from:
             gt_pieces.append(mel_to_wav(vocoder, feats["mel"], logf0, feats["uv"]))
         print(f"  chunk {i}: {len(seg) / mel.sr:.1f}s  voiced {np.mean(feats['uv'] > 0.5):.2f}",
               flush=True)
