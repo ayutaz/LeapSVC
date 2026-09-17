@@ -202,6 +202,12 @@ no source-speaker identity leaked through, and speaker conditioning worked. Enab
 during fine-tuning moved unseen-source recovery from 69.4% to 75.3% (Seed-VC 77.1%) **without
 costing content preservation or pitch fidelity**. **Speaker similarity could not be told apart by ear either.** A separate blind test asking which clip sounds more like the target (2026-09-15) was stopped after 6 of 12 pairs: all four decisive votes landed on whichever side was heard last, so it reached no verdict. That is consistent with the objective tie (0.5899 vs 0.5912).
 
+**Unseen Japanese speakers work too** (2026-09-17, 20 clips from the Tohoku Kiritan and No.7 databases, neither in the base training set). With loudness matched to the training distribution, intelligibility sits **+7.3 points above the ceiling**, speaker-similarity recovery is **90.4%**, and brightness is **0.93x** of the ceiling — **at least as good as seen speakers** (+8.9 points / 90.8%). Both new speakers are female and in the target's range, so **male and low-voiced unseen speakers remain unmeasured**.
+
+**We localised what limits quality.** Changing `num_steps`, enabling GAN, the fine-tune step count, the base training length, and **whether the speaker was seen** all leave intelligibility unchanged. The only thing that moves it is **whether the song itself was in training** (+1.0 points for training songs vs +7.3 to +11.1 for unseen ones). **We therefore will not retrain the base.** Note also that **`eval/loss` is not a proxy for intelligibility**: continued training took it from 0.02311 to 0.01459 without moving intelligibility at all.
+
+**Two defaults changed.** Inference uses **16** flow steps (swept 2026-09-01), and low-voiced sources are transposed by **+7 semitones** (swept 2026-09-16; the previous +12 is worse on both speaker similarity and intelligibility). **Pass `--match-loudness` for material you bring in** — this is needed for professional studio recordings too, not just streaming-mastered audio.
+
 **A blind listening test (N=1 informal preference, 26 pairs, 2026-09-13) also went to
 Seed-VC**: 21 of 25 decisive pairs, 1 tie. **The gap is concentrated on unseen sources**
 (2 vs 18 across 20 pairs); on the target's own held-out songs the two are level
