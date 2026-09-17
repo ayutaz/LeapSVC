@@ -96,7 +96,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **494 件**（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 82 / `test_svc_metrics` 239）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **498 件**（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 82 / `test_svc_metrics` 243）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -264,6 +264,17 @@ target 本人の録音は centroid 1160 Hz、LeapSVC は 1067 Hz でほぼ一致
 比べることになります（実測で話者類似度が 0.5886 → 0.4981 に見えていました）。
 `pick_clips()` が両方を落とします。**`--n-clips` の既定は 16 で、26 clip を黙って切ります** ―
 切り詰めは report に残るようにしました。
+- **CER の「上限との差」は 2 通りあります（2026-09-17 に取り違えました）。**
+`asr_cer.py` の `cer_excess_over_ceiling` は **中央値の差**（median(変換) − median(上限)）、
+`cer_breakdown.py` は **差の中央値**です。**名前が同じで中身が違い**、歪んだ分布では一致
+しません（実測で +12.7 対 +10.7、+25.5 対 +18.8）。**比較には差の中央値を使うこと。**
+`asr_cer.py` は両方を別の名前で出します（`cer_excess_diff_of_medians` /
+`cer_excess_median_of_diffs`）。**旧い名前は旧い意味のまま**残してあります。
+- **明瞭度で動くのは「その曲を学習で見たか」だけです（2026-09-17 実測）。**
+学習した曲そのものは **+1.0 点**、学習していない曲は**話者が既知でも未知でも +8.9 〜 +11.1 点**
+です（未知話者 n=20 で +11.1 点、回復率 88.5%）。**話者を変えても、移調を変えても、GAN を
+入れても、step を増やしても動きません。** したがって **base に話者を足す価値は低い**と
+見るべきです。
 - **層（未知曲か未知話者か）を決め打ちしないこと。** `tools/ja_testset.py` は
 `seen_speaker: true` を**決め打ち**していました（`natsume` / `oniku` 向けに書いたため）。
 **東北きりたん / No.7 は base に入っていない**のに「既知話者」と記録され、**一番言いたい

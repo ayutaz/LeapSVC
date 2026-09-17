@@ -1927,6 +1927,68 @@ class BlindAnchorTests(unittest.TestCase):
             score_anchors([{"pair": "pair00", "vote": "A"}])
 
 
+class CerSummaryStatisticTests(unittest.TestCase):
+    """**どの統計量かを名前で明示する。**
+
+    `asr_cer.py` の `cer_excess_over_ceiling` は **中央値の差**（median(変換) −
+    median(上限)）でしたが、`cer_breakdown.py` は **差の中央値**です。名前が同じで
+    中身が違ったため、**両方を混ぜて引用しました**（実測で +12.7 対 +10.7、
+    +25.5 対 +18.8 と食い違います）。歪んだ分布では一致しません。
+    """
+
+    CLIPS = [
+        {"cer_ceiling": 0.00, "cer_converted": 0.10, "cer_excess_over_ceiling": 0.10,
+         "ceiling_unusable": False, "asr_failed": False},
+        {"cer_ceiling": 0.02, "cer_converted": 0.12, "cer_excess_over_ceiling": 0.10,
+         "ceiling_unusable": False, "asr_failed": False},
+        {"cer_ceiling": 0.30, "cer_converted": 0.35, "cer_excess_over_ceiling": 0.05,
+         "ceiling_unusable": False, "asr_failed": False},
+    ]
+
+    def test_both_statistics_are_reported_with_distinct_names(self):
+        from tools.asr_cer import summarise
+        s = summarise(self.CLIPS)
+        self.assertIn("cer_excess_diff_of_medians", s)
+        self.assertIn("cer_excess_median_of_diffs", s)
+
+    def test_the_two_statistics_differ_on_skewed_input(self):
+        """**上限と変換の順位が clip ごとに違うと、2 つは大きく離れます。**
+
+        上限 0.00 / 0.20 / 0.40（中央値 0.20）、変換 0.50 / 0.25 / 0.45（中央値 0.45）。
+        **中央値の差は 0.25**、**差の中央値は 0.05** です。
+        """
+        from tools.asr_cer import summarise
+        skew = [
+            {"cer_ceiling": 0.00, "cer_converted": 0.50, "cer_excess_over_ceiling": 0.50,
+             "ceiling_unusable": False, "asr_failed": False},
+            {"cer_ceiling": 0.20, "cer_converted": 0.25, "cer_excess_over_ceiling": 0.05,
+             "ceiling_unusable": False, "asr_failed": False},
+            {"cer_ceiling": 0.40, "cer_converted": 0.45, "cer_excess_over_ceiling": 0.05,
+             "ceiling_unusable": False, "asr_failed": False},
+        ]
+        s = summarise(skew)
+        self.assertAlmostEqual(s["cer_excess_diff_of_medians"], 0.25, places=9)
+        self.assertAlmostEqual(s["cer_excess_median_of_diffs"], 0.05, places=9)
+
+    def test_the_old_name_still_means_the_old_thing(self):
+        # 既存の記録と読み比べられるように、**旧い名前は旧い意味のまま**残す。
+        from tools.asr_cer import summarise
+        s = summarise(self.CLIPS)
+        self.assertAlmostEqual(s["cer_excess_over_ceiling"],
+                               s["cer_excess_diff_of_medians"], places=9)
+
+    def test_degenerate_clips_are_excluded_from_the_median_of_diffs(self):
+        # **変換 CER が 100% を超えた clip は ASR の暴走**。中央値に入れない
+        # （`cer_breakdown.py` と同じ規則）。
+        from tools.asr_cer import summarise
+        bad = [*self.CLIPS, {"cer_ceiling": 0.0, "cer_converted": 9.0,
+                             "cer_excess_over_ceiling": 9.0,
+                             "ceiling_unusable": False, "asr_failed": False}]
+        s = summarise(bad)
+        self.assertEqual(s["n_degenerate"], 1)
+        self.assertAlmostEqual(s["cer_excess_median_of_diffs"], 0.10, places=9)
+
+
 class SpeakerSimilarityCollectionTests(unittest.TestCase):
     """どの WAV を「変換結果」として数えるか。**ここを間違えると別種のファイルを比べる。**"""
 

@@ -160,11 +160,53 @@ class WhisperTranscriber:
                 "asr_caveat": "話し声で学習されたモデルを歌に当てている。上限と並べて読むこと"}
 
 
+# 変換側の CER がこれを超えた clip は **ASR の暴走**（挿入で長さが基準を超える）。
+# 「聞き取りにくい」ではなく「別の文を生成した」なので、差の中央値には入れない
+# （`cer_breakdown.py` と同じ規則）。
+CONVERTED_DEGENERATE_MIN = 1.0
+
+
+def summarise(clips: list[dict]) -> dict:
+    """clip 記録を要約する。**どの統計量かを名前で明示します。**
+
+    `cer_excess_over_ceiling` は**中央値の差**（median(変換) − median(上限)）でした。
+    一方 `cer_breakdown.py` は**差の中央値**です。**名前が同じで中身が違ったため、
+    両方を混ぜて引用しました**（実測で +12.7 対 +10.7、+25.5 対 +18.8）。歪んだ分布では
+    一致しません。
+
+    - `cer_excess_diff_of_medians` … 中央値の差（旧 `cer_excess_over_ceiling` と同じ）
+    - `cer_excess_median_of_diffs` … **差の中央値**（暴走 clip を除く。こちらを既定で読む）
+
+    **旧い名前は旧い意味のまま残します** ―― 既存の記録と読み比べられるようにするためです。
+    """
+    import numpy as _np
+
+    ok = [r for r in clips if not r["asr_failed"] and not r["ceiling_unusable"]]
+    clean = [r for r in ok
+             if r.get("cer_excess_over_ceiling") is not None
+             and float(r["cer_converted"]) < CONVERTED_DEGENERATE_MIN]
+    out = {
+        "n_clips": len(clips), "n_usable": len(ok),
+        "n_clean": len(clean), "n_degenerate": len(ok) - len(clean),
+        "asr_failed": sum(1 for r in clips if r["asr_failed"]),
+        "ceiling_unusable": sum(1 for r in clips if r["ceiling_unusable"]),
+        "cer_converted": float(_np.median([r["cer_converted"] for r in ok])) if ok else None,
+        "cer_ceiling": float(_np.median([r["cer_ceiling"] for r in ok])) if ok else None,
+        "converted_degenerate_min": CONVERTED_DEGENERATE_MIN,
+    }
+    if ok:
+        d = out["cer_converted"] - out["cer_ceiling"]
+        out["cer_excess_over_ceiling"] = d      # 旧い名前は旧い意味のまま
+        out["cer_excess_diff_of_medians"] = d
+    out["cer_excess_median_of_diffs"] = (
+        float(_np.median([r["cer_excess_over_ceiling"] for r in clean])) if clean else None)
+    return out
+
+
 def main() -> int:
     import argparse
     import json
 
-    import numpy as np
 
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -208,16 +250,8 @@ def main() -> int:
                   f"上限 {r['cer_ceiling'] * 100:5.1f}%  "
                   f"差 {r['cer_excess_over_ceiling'] * 100:+5.1f} 点")
 
+    summary = summarise(rows)
     ok = [r for r in rows if not r["asr_failed"] and not r["ceiling_unusable"]]
-    summary = {
-        "n_clips": len(rows), "n_usable": len(ok),
-        "asr_failed": sum(1 for r in rows if r["asr_failed"]),
-        "ceiling_unusable": sum(1 for r in rows if r["ceiling_unusable"]),
-        "cer_converted": float(np.median([r["cer_converted"] for r in ok])) if ok else None,
-        "cer_ceiling": float(np.median([r["cer_ceiling"] for r in ok])) if ok else None,
-    }
-    if ok:
-        summary["cer_excess_over_ceiling"] = (summary["cer_converted"] - summary["cer_ceiling"])
     print("\n=== CER（中央値）===")
     if not ok:
         print(f"  **この素材とこの ASR では CER を測れません。**"
@@ -227,7 +261,12 @@ def main() -> int:
     else:
         print(f"  変換 : {summary['cer_converted'] * 100:.1f}%")
         print(f"  上限 : {summary['cer_ceiling'] * 100:.1f}%（ASR とボコーダーの下駄）")
-        print(f"  差   : {summary['cer_excess_over_ceiling'] * 100:+.1f} 点 <- 音響モデルの分")
+        print(f"  差（中央値の差）  : {summary['cer_excess_diff_of_medians'] * 100:+.1f} 点")
+        if summary["cer_excess_median_of_diffs"] is not None:
+            print(f"  **差の中央値**    : {summary['cer_excess_median_of_diffs'] * 100:+.1f} 点"
+                  f"  <- こちらを読む（健全 {summary['n_clean']} / 暴走 "
+                  f"{summary['n_degenerate']}）")
+        print("  ** 2 つは歪んだ分布で一致しません。**比較には差の中央値を使うこと** **")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         Path(a.out).write_text(json.dumps(
