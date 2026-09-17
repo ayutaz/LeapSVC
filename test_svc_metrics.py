@@ -1568,6 +1568,64 @@ class BlindListenPageTests(unittest.TestCase):
                 read_sheet(p)
 
 
+class BlindWobbleQuestionTests(unittest.TestCase):
+    """**名指しされた defect を直接聞く質問。**
+
+    2026-09-13 の聴取で 6 本中 5 本が「音量が揺れる」を挙げました。preference で
+    聞き直すと、**差が「良さ」に化けて記録されます**（選択肢に無い defect が近い
+    ラベルに化けた、というのは実際に踏んだ失敗）。
+    """
+
+    ROWS = [{"pair": "pair00", "clip": "unseen17"},
+            {"pair": "pair01", "clip": "unseen04"}]
+
+    def test_the_wobble_question_is_registered(self):
+        from tools.blind_test import QUESTIONS
+        self.assertIn("wobble", QUESTIONS)
+
+    def test_the_wobble_question_asks_about_level_not_quality(self):
+        from tools.blind_test import listen_page
+        html = listen_page(self.ROWS, question="wobble")
+        self.assertIn("音量", html)
+        # 良し悪しを一緒に聞くと、**preference の交絡（明るさ・大きさ）**が戻る。
+        self.assertNotIn("どちらが良い", html)
+        self.assertNotIn("自然さ", html)
+
+    def test_the_wobble_question_needs_no_target_reference(self):
+        # target に似ているかは聞かない。**基準が要らない質問**なので、
+        # 参照なしで作れること自体が契約。
+        from tools.blind_test import listen_page
+        self.assertIn("音量", listen_page(self.ROWS, question="wobble"))
+
+    def test_the_wobble_votes_do_not_share_storage_with_the_others(self):
+        # **同じ localStorage を使うと、前の質問の票が黙って埋まります。**
+        import re
+
+        from tools.blind_test import listen_page
+        key = re.compile(r'KEY\s*=\s*"([^"]+)"')
+        got = {q: key.search(listen_page(
+            self.ROWS, question=q,
+            references=[{"label": "target 本人（波音リツ）",
+                         "path": "context/target_ref.wav"}])).group(1)
+            for q in ("preference", "similarity", "wobble")}
+        self.assertEqual(len(set(got.values())), 3, got)
+
+    def test_the_wobble_question_writes_its_own_sheet(self):
+        from tools.blind_test import QUESTIONS
+        sheets = {q: QUESTIONS[q]["sheet"] for q in ("preference", "similarity", "wobble")}
+        self.assertEqual(len(set(sheets.values())), 3, sheets)
+
+    def test_tally_accepts_the_wobble_question(self):
+        # 集計が質問を知らないと、**別の質問の票を preference として読みます。**
+        from tools.blind_test import tally
+        sheet = [{"pair": "pair00", "clip": "unseen17", "vote": "A",
+                  "A": "v31", "B": "v32"},
+                 {"pair": "pair01", "clip": "unseen04", "vote": "B",
+                  "A": "v32", "B": "v31"}]
+        r = tally(sheet, question="wobble")
+        self.assertEqual(r["question"], "wobble")
+
+
 class BlindSimilarityPageTests(unittest.TestCase):
     """**質問が違えば別の test です。** preference の票が混ざらないことが最優先の契約。"""
 
