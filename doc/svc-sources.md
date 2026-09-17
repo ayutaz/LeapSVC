@@ -57,6 +57,11 @@
 | [`tools/cer_breakdown.py`](../tools/cer_breakdown.py) / `out/m5/metrics_*/cer_breakdown.json` | **CER の言語別分解**。pooled の +16.8 点は言語の混合で、訂正後は**日本語 +5 点前後 / 英語 +10〜19 点**。**上限中央が 10% を超える群と 3 本未満の群には差を出さない** |
 | `out/m5/metrics_{gan,gan_v31}_fixed/cer.json` | 採用中の系（GAN `ckpt_015000` / 16 step）の CER を V3 と V3.1 で測ったもの。**上限が run ごとに変わるため系間比較には使えない** |
 | `out/m5/leapsvc_1step_v31_shared/`、`out/m5/metrics_1step_v31_shared/` | **共有の上限で変換し直したもの**（`--ceiling-from`）と、その測定。**上限は 26 本すべて bit 一致**し `ceiling_comparable` が `true`。**上限 CER の食い違いは 0 / 26** で、読める素材では **GAN + 16 step が明瞭度を変えていない**（+9.9 → +9.9 点、改善 3 / 悪化 4 / 同じ 7） |
+| [`tools/ja_testset.py`](../tools/ja_testset.py) / `out/m5/testset_ja.json` / `out/m5/testset_ja_unseen.json` | 日本語 test set。**未知曲・既知話者 50 clip**（`natsume` / `oniku`）と**未知話者 20 clip**（きりたん / No.7）。層は `--seen-speaker` / `--unseen-speaker` で明示 |
+| `out/m5/ja_unseen_gan{,_ml}/`、`out/m5/sweep_metrics/{cer,sim}_ja_unseen{,_ml}.json` | **未知話者の日本語での測定**。音量を合わせて**明瞭度 +7.3 点 / 回復率 90.4% / 明るさ 0.93x**。合わせないと 0.71x |
+| `out/m5/sweep_tr{0,7,10,12}/`、`out/m5/sweep_metrics/{cer,sim}_tr*.json` | **移調の掃引**。事前登録した規則が **+7** を選んだ（+12 は両方の軸で劣る） |
+| `out/m5/ckpt_sweep_*/`、`out/m5/where_*/` | **checkpoint と段階の切り分け**。明瞭度は fine-tune の step でも base の学習量でも動かない |
+| `out/m5/probe_trainsongs/` | **学習曲での自己再構成**（診断用。**品質の主張には使わない**）。上限比 **+1.0 点** |
 | [`tools/ja_material_audit.py`](../tools/ja_material_audit.py) / `out/ja_audit/` | **日本語素材の曲単位の棚卸し**（2026-09-16）。**GTSinger 日本語 2 名は未使用曲ゼロ**（`--max-hours` が各曲から間引くため全曲が汚染）、**使えるのは `natsume` 22 曲 + `oniku` 28 曲だけ**。`JA_Tenor_1` は**学習素材 78 本が手元に無い** |
 | [`doc/svc-content-encoder.md`](svc-content-encoder.md) / [`doc/svc-dataset-ledger.md`](svc-dataset-ledger.md) | encoder 選定と M0 台帳 |
 | [`pyproject.toml`](../pyproject.toml) / [`uv.lock`](../uv.lock) / `.python-version` | Python 3.13 固定、CUDA wheel index、依存の解決結果 |
