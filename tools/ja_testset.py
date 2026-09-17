@@ -42,8 +42,8 @@ MIN_CLIP_SECONDS = 12.0
 
 
 def pool_from_audit(report: Mapping[str, Any], *, speaker: str, layout: str,
-                    seconds: float,
-                    durations: Mapping[str, float]) -> list[dict[str, Any]]:
+                    seconds: float, durations: Mapping[str, float],
+                    seen_speaker: bool) -> list[dict[str, Any]]:
     """棚卸しの結果から、test に使える曲の pool を作る。
 
     **`used_songs` に当たる曲が `free_files` に紛れていたら落とします。** 黙って通すと
@@ -73,8 +73,12 @@ def pool_from_audit(report: Mapping[str, Any], *, speaker: str, layout: str,
         pool.append({
             "speaker": speaker, "song": song, "clip": Path(rel).name,
             "path": str(root / rel), "seconds": float(seconds), "full_seconds": dur,
-            # **「未知話者」と名乗らない。** 層を記録に残す。
-            "kind": "unseen_song", "seen_speaker": True,
+            # **層を決め打ちしない。** `natsume` / `oniku` は base に入っているので
+            # 「未知曲・既知話者」ですが、**東北きりたん / No.7 は入っていない**ので
+            # 「未知話者」です。決め打ちすると**一番言いたい主張がラベルとして間違って
+            # 残ります**（実際に踏みました）。
+            "kind": "unseen_song" if seen_speaker else "unseen_speaker",
+            "seen_speaker": bool(seen_speaker),
         })
     return pool
 
@@ -97,6 +101,11 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--min-voiced", type=float, default=MIN_VOICED)
     ap.add_argument("--out", required=True)
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--seen-speaker", dest="seen_speaker", action="store_true",
+                   help="この話者は base の学習に入っている（層は「未知曲・既知話者」）")
+    g.add_argument("--unseen-speaker", dest="seen_speaker", action="store_false",
+                   help="**base に入っていない**（層は「未知話者」）")
     a = ap.parse_args()
 
     clips: list[dict[str, Any]] = []
@@ -109,7 +118,8 @@ def main() -> int:
         durs = {rel: float(sf.info(str(root / rel)).duration)
                 for rel in rep[spk]["free_files"]}
         pool = pool_from_audit(rep, speaker=spk, layout=a.layout,
-                               seconds=a.seconds, durations=durs)
+                               seconds=a.seconds, durations=durs,
+                               seen_speaker=a.seen_speaker)
         short = len(rep[spk]["free_files"]) - len(pool)
         print(f"[ja-testset] {spk}: 未使用 {len(rep[spk]['free_files'])} 曲 -> "
               f"{a.seconds:.0f} 秒に足りる {len(pool)} 曲（短くて落とした {short}）", flush=True)
@@ -128,11 +138,11 @@ def main() -> int:
     out = {
         "clips": clips,
         "manifest": {
-            "kind": "unseen_song",
-            "seen_speaker": True,
-            "note": ("**未知話者ではありません。** 手元の日本語 5 名は全員 base の学習に"
-                     "入っています。未知話者の日本語が要るなら東北きりたん / No.7 の取得が"
-                     "必要です"),
+            "kind": "unseen_song" if a.seen_speaker else "unseen_speaker",
+            "seen_speaker": bool(a.seen_speaker),
+            "note": ("**未知話者ではありません。** この話者は base の学習に入っています"
+                     if a.seen_speaker else
+                     "**未知話者です。** この話者は base の学習に入っていません"),
             "seconds": a.seconds, "per_song": a.per_song, "seed": a.seed,
             "min_voiced": a.min_voiced, "min_clip_seconds": MIN_CLIP_SECONDS,
             "speakers": list(a.speakers),
@@ -141,7 +151,9 @@ def main() -> int:
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\n合計 {len(clips)} clip -> {a.out}")
-    print("  ** 層は「未知曲・既知話者」。**「未知話者」とは名乗らないこと** **")
+    print("  ** 層は「未知曲・既知話者」。**「未知話者」とは名乗らないこと** **"
+          if a.seen_speaker else
+          "  ** 層は「未知話者」。base に入っていないことを確認済み **")
     return 0
 
 
