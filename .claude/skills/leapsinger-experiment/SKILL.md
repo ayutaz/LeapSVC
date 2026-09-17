@@ -1,0 +1,341 @@
+---
+name: leapsinger-experiment
+description: LeapSinger の学習実験（SVS / SVC の base 学習、fine-tune、ablation）を最初から最後まで間違えずに回す。train.py を実行する前、run 名や config を決めるとき、学習を再開・継続するとき、学習結果を記録・報告するときに使う。checkpoint の上書き事故、無視される設定、既存経路の破壊を防ぐ。
+---
+
+# 学習実験の回し方
+
+`train.py` を叩く前に、この手順をそのまま順に実行する。各段の判定材料が揃わないうちに次へ進まない。
+
+## 0. 前提（省略しない）
+
+1. [leapsinger-verify](../leapsinger-verify/SKILL.md) が PASS していること。していないなら先に回す。
+2. `git status` がクリーンか、変更が意図したものだけであること。**実験は commit された状態から始める。**
+   後から「どのコードで出た結果か」を復元できないと、その run は捨てることになる。
+3. データ契約を満たしていること。SVC は `data/<db>/{metadata.json, svc_shard.npz}` で、
+   `content` `f0_interp` `uv` `loudness` `mel` の `T` が**完全一致**していること。
+   loader は暗黙に直さず例外にする。これは前処理ミスを早期に出すための設計なので緩めない。
+
+## 1. run 名を決める
+
+**`--run_name` を再利用すると `log/<run_name>/ckpt_*.pt` の最新から黙って自動再開する。**
+これが最も起こりやすい事故。別の実験なら必ず別名にする。
+
+```bash
+ls log/                      # 既存の run を必ず確認してから決める
+```
+
+命名は `<arch>_<データ>_<変えた要素>_<連番>` のように、後から差分が分かる形にする
+（例: `svc_target_lr8_01`）。継続のつもりで同名を使うのは正しいが、**そのときは
+「継続である」と明示的に判断したことを記録に残す**。
+
+### 既存の成果物（上書きしないこと）
+
+| run | 中身 | 使い方 |
+|---|---|---|
+| `m3_base` | **M3 の multi-singer base**。23 話者 / 約 18 時間 / **60,000 step**。`ckpt_060000.pt` 134.7 MB（30,000 step 版も比較基準として保存済み） | M4 の `--init_from` の入力。**別の `run_name` で fine-tune する** |
+| `svc_seed0` / `svc_seed1` | 256 次元部分集合の A/B（3,000 step） | 比較の記録。再利用しない |
+
+M3 の base は `spk_map` に 23 話者を持ちます（波音リツは **spk_id 22**、3 音源が同じ id）。
+config は `log/m3_base/config.yaml` が**その run の完全な記録**です（`configs/svc_base_multi.yaml`
+は `spk_map` を持たない recipe で、`tools/m3_corpus.py --write-config` が素材から埋めます）。
+
+## 2. config を用意する
+
+- 公開 config（`configs/svc_base.yaml` / `configs/svc_base_multi.yaml` / `3speaker_gan2d.yaml` /
+  `3singer_ritsu3style_uv_gan2d.yaml`）を直接編集しない。コピーして実験用の名前を付ける。
+- `configs/.gitignore` は top-level の `configs/*.yaml` を無視する。**新しい config はコミットされない。**
+  実験記録として残すなら、config の完全なコピーを成果物側に置く。
+- `mel` セクションは前処理・loader・励起 hop で共有される。**前処理時と 1 つでも違うと無音や崩れになる。**
+  44.1 kHz / hop 256 / n_fft 2048 / 128 mel / 40–16000 Hz（NHVSing V3 互換）から動かさない。
+
+### 無視される・失敗する設定（先に潰す）
+
+| 設定 | 実際の挙動 |
+|---|---|
+| `accum_steps` | **実装されていない。** 値を書いても無視される。実効 batch は増えない |
+| `pitch_aug: true`（SVC） | `train.py` が SystemExit する。augmentation は特徴抽出の前に行う |
+| `data.eval_songs`（曲が 1 つだけ） | `n_hold = min(eval_songs, 曲数-1)` で eval が空になる。評価は自動で飛ぶ |
+| `--init_from` で SVS → SVC | 同一構造前提。arch をまたぐ部分ロードは未実装 |
+| CUDA 推論の再現性 | **既定では bit 再現しない。** RNG ではなく conv/matmul の非決定性（実測 ln-mel で max 7.95e-02）。`torch.use_deterministic_algorithms(True)` + `CUBLAS_WORKSPACE_CONFIG=:4096:8` で bit 一致する（CPU は既定で一致） |
+| 無声だけの phrase | 曲を固定長で切るとイントロが丸ごと無声になる（実測 89 中 35 件）。**学習に入れると「無音を出す」ことを学ぶ。** `preprocess.svc.run --min-voiced` で除外する |
+| `eval_items`（多話者） | **話者ごとの本数**。3 話者なら 9 サンプルだが、**23 話者だと 69 サンプル**になり、1 回の eval が mel 図と音声を 138 本書き出して **10 分以上**かかる（実測。単一コア 100%）。多話者では `eval_items: 1` と `eval_interval` を大きくする |
+
+## 3. 走らせる — **手元では回さない（CPU も含めて）**
+
+**決定:** 学習はすべて vast.ai の Linux インスタンスで行います。手元の Windows 機は開発・推論・
+検証に使います。手元で `train.py` を起動すると **device によらず** hook が止めます
+（`check_local_training`）。
+
+**`--device cpu` に逃げてはいけません。** 実測で 1 phrase 1200 step に約 60 分かかり、
+実験記録の環境も本番と食い違います。所要が短くても、遅くても、ローカルで済ませようとしないこと。
+ローカル GPU は他の作業と取り合って `unspecified launch failure` を起こしました（実際に発生）。
+
+インスタンスは [vast-instance](../vast-instance/SKILL.md) に従って用意します。
+
+
+```bash
+uv run python -m train --config <config> \
+  --data_dirs <data...> --run_name <run> --out_root log --device cuda
+```
+
+長時間になるなら `run_in_background` で回し、通知を待つ。**sleep でポーリングしない。**
+
+## 4. 走り出しを確認する（最初の 100 step で必ず見る）
+
+1. `model <arch> <N>M params` が期待どおりか（SVC なら `harmonic_svc`）。
+2. `[dataset]` / `[svc-dataset]` の phrase 数が期待どおりか。0 なら split か `min_sec` を疑う。
+3. `train/flow` と `train/recon` が下がっているか。NaN や発散なら即止める。
+4. GAN を使うなら `gan_start_step` を超えてから `train/d_loss` `train/adv` が出ているか。
+5. **実測値を取る**: `train.py` が step 100 / 1,000 / 10,000 で `[perf]` 行を出し、
+   `log/<run>/perf.json` と TensorBoard の `perf/*` に残す（steps/sec、examples/sec、
+   frames/sec、peak VRAM）。checkpoint サイズと eval 所要は別途控える。
+   これは [`doc/svc-data-compute.md`](../../../doc/svc-data-compute.md) の見積もりを実測へ置き換える材料であり、
+   vast.ai なら**そのまま料金の見積もり**になる。
+
+   **batch を上げても速くなりません（2026-08-31 実測）。** batch 16/32/64 で 117.5/140.1/158.4
+   examples/s、peak VRAM 1.95/3.66/7.10 GB。**4 倍にして 1.35 倍**で、GPU はほぼ演算飽和です。
+   VRAM が余っていても速度はついてきません。効くのは GPU 自体の速度か、未実装の AMP です。
+
+   **実測の例（2026-08-30、RTX 3090 / 23 話者の multi-singer base）:** 8.14 step/s、
+   130 ex/s、151k frames/s、**peak VRAM 1.95 GB**。見積もり表の「multi-singer base は 24 GB」は
+   大きく外していた。`max_batch_size: 16` が先に効いて 1 batch が約 22,000 フレームで
+   頭打ちになるため。**VRAM ではなく batch 本数が制約になることがある。**
+
+## 5. 成果物を守る
+
+- vast.ai インスタンスの**ディスクは揮発する**。`log/<run>/ckpt_*.pt` と `events.out.tfevents.*` は
+  実験の一部なので、走らせっぱなしにせず定期的に外へ退避する。
+- base checkpoint は上書きしない。fine-tune は必ず別 `--run_name` / 別ディレクトリ。
+
+## 6. 記録する（この run について何が言えるかを決める）
+
+最低限これを残す。欠けると後で比較できない。
+
+- Git commit と（あれば）dirty diff、config の完全なコピー
+- dataset manifest / split / checksum
+- `uv.lock` と `.python-version`、CUDA / driver / GPU
+- seed、batch frames、peak VRAM、init checkpoint と load report
+- train/validation 曲線、生成サンプル、失敗例のリスト
+- best checkpoint の選び方、途中再開の履歴
+
+### checkpoint の選択規則は、走らせる**前**に config へ書く
+
+**実測（M4）:** target fine-tune では **target の再現と未知 source の内容保持が単調に逆へ動きます**
+（上限比 94.8% → 98.1% に対し、content cos 0.8599 → 0.8359）。**train loss も eval loss も
+最後の checkpoint が最小**なので、loss だけで選ぶと最悪のものを選びます。
+
+[`configs/svc_target_ft.yaml`](../../../configs/svc_target_ft.yaml) の header に
+
+> 未知 source の cos が base から 0.02 を超えて落ちた checkpoint は選ばない
+
+と**書いてから**走らせ、規則は 15,000 step で発動しました。後から決めると、出た数字を見て
+基準のほうを動かせてしまいます。
+
+- **規則は「除外条件」の形で書く。** 「良いほうを選ぶ」ではなく「これを満たさないものは候補外」。
+- **`save_interval` を十分細かく。** 規則が発動した位置の手前に候補が無いと選びようがありません
+  （M4 は 2,500 step ごと・20,000 step で 8 本）。
+- **明るさは移調あり・なしの両方で記録する**（`--transpose` 0 と +12）。片方だけでは、
+  モデルの品質ではなく source と target の音域差を測ってしまいます。
+
+### 「その指標は使えない」と結論する前に、素材の条件を振る
+
+**実測（2026-08-31 → 09-01）:** 話者類似度について、一度「手元の encoder では測れない」と
+結論しました。**間違いではないが、原因の半分を見落としていました。** 6 秒に切ったクリップで
+測っており、**12 秒にすると同じ判定基準を通る encoder があった**のです。
+
+| | 6 秒 | 12 秒 |
+|---|---:|---:|
+| wavlm x-vector（重なり） | 83.3% | 77.0%（不合格のまま） |
+| **ECAPA-TDNN** | 56.9% | **19.8%（合格）** |
+
+**encoder を替えるだけでも、長さを変えるだけでも足りませんでした。** 指標が使えないときは、
+モデルだけでなく **入力の条件（長さ・素材の種類・前処理）を先に振る**こと。そして
+**判定基準は振る前に決めておく**こと（ここでは「重なり 20% 以下」を先に書きました）。
+
+### 比較実験では「変換条件が揃っているか」を機械で確かめる
+
+**実測（M5）:** 26 clip の test set が、**15 本 chunk 20 秒 / 11 本 chunk 10 秒**で混ざりました。
+どちらもエラーを出さず、**測ってしまえばモデルの差か条件の差か分かりません**。
+`tools/svc_batch.py` の `check_consistent` が、揃っていなければならない項目
+（ckpt / spk_id / num_steps / device / chunk_sec）を比べます。**測る前に必ず通すこと。**
+
+**device も混ぜないこと。** CPU と GPU は conv/matmul の非決定性で bit 一致しません。
+
+### 未検証の学習経路は、借りる前に smoke で踏む
+
+**実測（GAN fine-tune）:** GAN 付き SVC は一度も動かしたことがない経路でした
+（smoke は SVS 側の GAN しか踏んでいなかった）。**vast.ai で 1〜2 時間ぶん払う前に**
+smoke へステージを足し、手元の GPU で確認しました。
+
+**「落ちない」では足りません。** TensorBoard で `d_loss` / `adv` / `gan_ramp` が実際に
+出ていること、**判別器が本物と偽物を分け始めていること**まで見ます。config に
+`enabled: true` と書いてあっても、`gan_start_step` が短い smoke の step 数より大きいと
+**GAN 経路を一度も通らずに「通った」ことになります**（smoke では 5 step に前倒しした）。
+
+### 素材の異常は「上限からの距離」で気づく
+
+**実測（M5）:** hold-out 6 区間のうち 3 本がイントロや間奏（有声率 3.5〜34%）でした。
+気づいたのは、**target 本人の生録音が target の参照と 0.39 しか一致しない**（上限 0.67）
+という異常からです。**モデルの出力（0.36）とほとんど変わらない**ので、モデルが悪いように
+見えていました。
+
+**素材を疑う手順:** 変換前の source を同じ指標に通し、**上限に近い値が出るか**を見ます。
+出なければ素材の問題で、モデルの評価にはなりません。
+
+### 上限が要る指標は、系をまたいで比べられない
+
+**実測（M5）:** CER・信号品質・明るさは「GT mel を**自分の**ボコーダーに通した再合成」が
+基準なので、別の系（Seed-VC）と並べられません。**比べられるのは source か target 録音を
+基準にする指標だけ**です（話者類似度・timing・F0・V/UV）。
+
+**failure の本数も比べられません。** 測った軸の数が違うと、少ないほうが「破綻が少ない」
+ように見えます（実測で LeapSVC 8 / Seed-VC 1。Seed-VC は 2 軸を測れていないだけ）。
+
+### `perf.json` の値は瞬間値
+
+**実測:** M3 base の 8.14 step/s は step 1,000 時点の値で、M4 の 4.06 step/s は eval と
+checkpoint 保存を含む長時間の平均です。**同じ 3090 でも 2 倍違います。** 所要時間と料金を
+見積もるときは、eval 頻度と保存本数を込みで考えること。
+
+**M3 で実際に回収したもの（同じ粒度で残す）:** `ckpt_030000.pt`、`config.yaml`、`perf.json`、
+TensorBoard の events、**話者 25 分の `manifest.json` / `metadata.json`**、`m3_corpus.json`（素材の
+選定）、抽出と学習のログ、検証の JSON と WAV、`nvidia-smi` の出力。**インスタンスのディスクは
+破棄で消えるので、`destroy` の前に必ず回収する。**
+
+## 6b. 推論の条件を学習と揃える（M3 で外した）
+
+**学習（`preprocess.svc.run`）は生の音量のまま特徴を取ります。** 推論側で波形を加工すると、
+`features_to_item()` の保証の**外側**で条件がずれます。実際に検証ツールが入力を peak 0.95 へ
+正規化しており、波音リツ DB（peak 0.107）では**実質 19 dB の増幅**になって loudness 条件が
+学習分布の 1.2σ 外へ出ていました。モデルは低域を持ち上げ高域を削り、spectral centroid が
+620 → 368 Hz に落ちます。
+
+- 推論の前に **loudness の正規化後の値**を学習分布（manifest の `loudness_mean` / `loudness_std`）と
+  突き合わせる。±1σ を大きく外れていたら入力の扱いを疑う。
+- **resample 以外の加工をしない。** 試聴用に音量を揃えるのは、特徴抽出の後で。
+- **ただし持ち込み音源は例外。** 配信用に整えられた音源は peak 1.0 付近まで上げられており、
+  学習素材（波音リツ DB は peak 0.107）から大きく外れます。実測で **+1.40σ**、
+  spectral centroid が上限比 **−47%** まで落ちました。`svc_convert.py --match-loudness` で
+  学習分布の平均へ寄せると **−24%** に戻ります。**「触らない」と「学習分布へ合わせる」は別**で、
+  前者が既定、後者は明示的に指定するもの。
+
+## 6c. 内容指標だけで判断しない
+
+**content cos / F0 相関 / V/UV は高域の欠落を検知しません。** 上の不具合で centroid が
+620 → 368 Hz に落ちても content cos は 0.8217 → 0.8096 しか動きませんでした。
+[`tools/audio_metrics.py`](../../../tools/audio_metrics.py) の spectral centroid と帯域比を
+併せて見ること。基準は source ではなく **「GT mel をボコーダーに通した再合成」（上限）**です。
+
+**そして人に聴いてもらうこと。** この 2 件は利用者の「音がこもっている」という一言から
+見つかりました。指標が揃って良いことを「問題なし」の根拠にしないでください。
+
+**`num_steps` を振ってみること。** rectified flow は 1 step と多 step がほぼ一致するのが理想で、
+**差が出るなら 1 step 写像が未収束**という直接の証拠になります。M3 の base では 16 step にすると
+spectral centroid の不足が 30,000 step 時点で **1 step −18.1% / 16 step −7.3%**（乖離 10.8 点）、60,000 step で **1 step −13.7% / 16 step −7.7%**（乖離 **6.0 点**）でした。
+**乖離が縮むこと自体が rectification の進行**を示します。品質を報告するときは
+**step 数を必ず併記**すること（多 step は行き過ぎることもある。実測で上限比 +10%）。
+
+## 6b. 2 つの系を比べるとき（2026-09-13 に踏んだこと）
+
+**同じ量を、同じ入力の集合で、同じ前処理で測る。** M5 では次を取り違えました。
+
+| 取り違え | 症状 |
+|---|---|
+| 片方だけ上限（`*_vocoder_only.wav`）が同じディレクトリにあった | 自系だけ**別種のファイル**が混ざって平均された |
+| 片方にだけ `--testset`（移調表）を渡していた | 自系だけ**意図した移調が誤差として計上**された |
+| 既定の `--n-clips 16` で 26 clip が黙って切られた | 指標が**フラグ次第**で変わった |
+
+**A/B の聴取では、RMS を揃えるだけでは足りません。** 実測で baseline は 26 clip すべて
+**1.17〜3.19 倍明るく**（中央値 1.80）、評価者は「選んだほうが大きかった」と述べました。
+**同じ RMS でも明るい音は大きく・近く聴こえます**（LUFS の差は中央値 −0.26 LU しかなく、
+これでは説明が付きません）。**唯一の引き分けは、明るさの差が最小の clip**でした。
+
+**明るさは揃えられません** ―― 評価対象そのものだからです。できるのは**交絡として記録する**
+ことと、**交絡しにくい別の質問を立てる**ことだけです。**都合の悪い結果を後から無効にしない**
+こと。事前登録の規律が壊れます。**足せるのは別の質問であって、取り消しではありません。**
+
+**上限（`*_vocoder_only.wav`）は作り直さず使い回すこと。** NHVSing の ONNX には
+**seed 属性の無い `RandomNormalLike`** があり、**ボコーダーを通した出力は run ごとに必ず
+変わります**（CPU + `use_deterministic_algorithms` でも bit 一致しません）。実測で、同じ V3 の
+2 つの run で **26 clip 中 6 本の上限 CER が 5 点を超えてずれました**（最大 88 点）。
+
+```bash
+# 1 つ目の系で上限を作り、以降はそれを使い回す
+uv run python tools/svc_convert.py ... --self-check --ceiling-from out/<最初の系>
+```
+
+`convert.json` の **`ceiling_comparable` が `false` の記録どうしは「上限との差」を比べられ
+ません**。**比較の前にこのフラグを見ること。** 連続量（SQUIM・centroid）への影響は小さく、
+**CER に強く出ます**（ASR が離散なので、わずかな音の差で書き起こしが丸ごと変わる）。
+
+**主観テストには anchor を混ぜること。** 入れないと**「2 系が同一」と「評価者が課題を
+遂行できていない」を区別できません**。実測で、判定 4 票が**すべて「後に聴いた側」**に張り付き、
+評価者は「意味がないように思えます」と述べました。**target 本人 対 無関係な話者**のペアを
+混ぜておけば、判別できる耳であることを先に確認できます。
+
+```bash
+uv run python tools/blind_test.py prepare --a <系A> --b <系B> --out <dir> --seed <n> \
+  --anchor-target t1.wav t2.wav t3.wav --anchor-foil f1.wav f2.wav f3.wav
+```
+
+正解は `anchors.json` にだけ置かれ、**ページにも `key.json` にも出ません**。`tally` が別に
+採点し、**合格線 75%** を下回ると「本番の拮抗を『2 系が同一』と読まないこと」と警告します。
+**引き分けは不正解**（本人 対 無関係で引き分けなら判別できていない印）、**未記入は不正解に
+しません**。
+
+**集計では side の偏りを必ず見ること。** `tally()` は `sides` と `p_side` を返します。
+**p_side が系の p より小さいときは、系の勝敗を読む前に「判別できていたのか」を疑う**こと。
+preference は A 10 / B 15 で無罪、similarity は A 0 / B 4 でした。
+
+**客観で同等と分かっている軸を、主観で測ろうとしないこと。** 相対差 0.2% は、**人間が
+判別できないことを予告している**と読めます。「測れていない」より先に「**差が無い**」を考える。
+
+**聴取の質問を「客観で測ってあるから」と外さないこと。** M5 では「どちらが target に似ているか」
+を外し、根拠にした客観値（0.4981）が**後に測定誤りと判明**しました（訂正後 0.5899 でほぼ同等）。
+**壊れた測定は、その値だけでなく、それを根拠に外した観測も道連れにします。**
+
+**選好と忠実さは別物です。** baseline は target 本人の録音より 1.85 倍明るく、こちらは
+target とほぼ同じ明るさでした。**選ばれたほうが target に近いとは限りません。**
+
+## 6c. 「何を変えるか」を決める前に、どこで差が生まれるかを測る（2026-09-14〜17）
+
+**8〜12 時間の学習を回す前に、手元の checkpoint で切り分けられることがあります。**
+M5 の後、品質の律速を探して**再学習ゼロで 5 つの軸を否定**しました。
+
+| 変えた軸 | 明瞭度は動いたか | 費用 |
+|---|---|---|
+| `num_steps`（1 → 16） | 動かない | 済（既存データ） |
+| GAN の有無 | 動かない | 済（既存 checkpoint） |
+| fine-tune の step（2,500 → 15,000） | 動かない | **20〜30 分** |
+| base の学習量（30,000 → 60,000） | 動かない | **20 分** |
+| **話者の既知性**（既知 → 未知） | 動かない | 1〜2 時間 |
+| **その曲を学習で見たか** | **動く**（+1.0 点 対 +7.3〜+11.1 点） | **30 分** |
+
+**手順:**
+
+1. **学習データで測る。** 学習曲を変換して指標が上限並みなら、**容量も表現も足りて
+   います**。落ちるのは汎化です。**これは診断であって品質の主張には使いません。**
+2. **段階を分けて測る。** base / fine-tune の各 checkpoint は手元に残っています。
+   **どこで差が生まれるか**が分かると、変える場所が 1 つに絞れます。
+3. **手元の checkpoint で否定できる仮説を先に潰す。** 再学習は最後です。
+
+**学習 hold-out は後から再現できます。** `random.Random(42).sample(sorted(曲名), eval_songs)`
+で、曲名は `preprocess.svc.run` が **casefold してから** `[^\w-]+` を `_` に置換した形です。
+**casefold を忘れると別の曲が hold-out になります**（実際に一度取り違えました）。
+
+**`eval/loss` は品質の代理になりません。** 継続学習で 0.02311 → 0.01459 と下がっても、
+**未知曲の明瞭度は動きませんでした**。
+
+## 7. 主張の範囲を守る
+
+結果を書くときは [`doc/svc-prior-art-license.md`](../../../doc/svc-prior-art-license.md) 6 節の規則に従う。
+
+- 「確認済み」はコード・実行 artifact・一次資料のいずれかを示せるときだけ。
+- 「Seed-VC より良い」は同一 test set の blind comparison の後だけ。
+- 「リアルタイム」は対象ハードでの end-to-end 遅延実測と連続動作の後だけ。
+- 「世界初」「唯一」は使わない。「1-step」は acoustic flow の step 数であって pipeline 全体ではない。
+
+完了したマイルストーンがあれば [`doc/svc-plan.md`](../../../doc/svc-plan.md) の判定材料と照合し、
+[`doc/svc-implementation-status.md`](../../../doc/svc-implementation-status.md) の検証済み/未検証境界と
+[`doc/svc.md`](../../../doc/svc.md) の完了レベルを**同時に**更新する（[leapsinger-docs](../leapsinger-docs/SKILL.md)）。

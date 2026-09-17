@@ -6,7 +6,7 @@ The recipe describes only what differs per database (paths, lab time unit, speak
 F0 range, phoneme normalisation). Everything else is the common pipeline. Phoneme timing
 comes straight from the `.lab`; there is no musical score.
 
-    python -m preprocess.run --recipe configs/recipes/ritsu.yaml
+    uv run python -m preprocess.run --recipe configs/recipes/ritsu.yaml
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import os
 import yaml
 
 from leapsinger.config import MelSpec
+
 from . import recipes
 from .lab import process_file
 from .shard import combine_db

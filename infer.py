@@ -17,13 +17,14 @@ import os
 import numpy as np
 import torch
 
-from leapsinger.models.acoustic import (HarmonicAcousticModel,
-                                       HarmonicAcousticModelMultiSpk)
+from leapsinger.models.acoustic import HarmonicAcousticModel, HarmonicAcousticModelMultiSpk
+from leapsinger.models.svc import HarmonicSVCModel
+from tools.svc_defaults import SVC_NUM_STEPS
 
 
 def _build_from_config(cfg: dict, device):
     common = dict(
-        n_phonemes=cfg["n_phonemes"], hidden=cfg.get("hidden", 256),
+        hidden=cfg.get("hidden", 256),
         mel_bins=cfg["mel_bins"], mel_vmin=cfg.get("mel_vmin", -11.5),
         mel_vmax=cfg.get("mel_vmax", 2.0), backbone_ch=cfg.get("backbone_ch", 256),
         n_cycles=cfg.get("n_cycles", 3), dilation_schedule=cfg.get("dilation_schedule", "pow2_15"),
@@ -35,11 +36,21 @@ def _build_from_config(cfg: dict, device):
         noise_ratio=cfg.get("noise_ratio", 0.05), exc_scale=cfg.get("exc_scale", 0.15),
         harm_decay=cfg.get("harm_decay", 1.0), exc_hop=cfg.get("exc_hop", cfg.get("hop", 256)),
     )
-    if cfg.get("arch") == "harmonic_multispk":
+    if cfg.get("arch") == "harmonic_svc":
+        model = HarmonicSVCModel(
+            **common, **harm, content_dim=cfg["content_dim"],
+            content_layers=cfg.get("content_layers", 2),
+            content_dropout=cfg.get("content_dropout", 0.1),
+            n_speakers=cfg.get("n_speakers", 0), spk_dim=cfg.get("spk_dim", 0),
+        )
+    elif cfg.get("arch") == "harmonic_multispk":
         model = HarmonicAcousticModelMultiSpk(
-            **common, **harm, n_speakers=cfg["n_speakers"], spk_dim=cfg["spk_dim"])
+            **common, **harm, n_phonemes=cfg["n_phonemes"],
+            n_speakers=cfg["n_speakers"], spk_dim=cfg["spk_dim"])
     else:
-        model = HarmonicAcousticModel(**common, **harm, n_speakers=cfg.get("n_speakers", 0))
+        model = HarmonicAcousticModel(
+            **common, **harm, n_phonemes=cfg["n_phonemes"],
+            n_speakers=cfg.get("n_speakers", 0))
     return model.to(device)
 
 
@@ -74,6 +85,55 @@ def infer_mel(model, item: dict, num_steps: int = 10, device: str = "cpu", seed:
     if hasattr(model, "spk_bank") or getattr(model, "spk_emb", None) is not None:
         kw["spk_id"] = torch.tensor([int(item.get("spk_id", 0))], device=dev)
     if getattr(model, "style_emb", None) is not None:
+        kw["style_id"] = torch.tensor([int(item.get("style_id", 0))], device=dev)
+    mel = model.infer(**kw)
+    return mel[0].cpu().numpy()
+
+
+@torch.no_grad()
+def infer_svc_mel(model, item: dict, num_steps: int = SVC_NUM_STEPS,
+                  device: str = "cpu", seed: int = 0):
+    """Run a HarmonicSVCModel on one frame-aligned feature item.
+
+    Required keys are ``content`` [T,C], ``f0_logf0`` [T], ``uv`` [T], and
+    ``loudness`` [T]. Content encoder and pitch extractor execution deliberately
+    live outside this function so the same contract can serve offline training
+    and a future streaming frontend.
+
+    ``num_steps`` defaults to :data:`tools.svc_defaults.SVC_NUM_STEPS` (16), chosen by a
+    pre-registered rule over a 20-clip sweep: it recovers 58.9% -> 68.6% of the way toward
+    the target speaker for -0.019 content cosine, and the flow costs 2.1x rather than 16x
+    because most of the time is call overhead. The SVS path (:func:`infer_mel`) is
+    unchanged -- that route was not measured here.
+    """
+    if not isinstance(model, HarmonicSVCModel):
+        raise TypeError("infer_svc_mel requires HarmonicSVCModel")
+    torch.manual_seed(seed)
+    dev = torch.device(device)
+
+    content = np.asarray(item["content"], dtype=np.float32)
+    if content.ndim != 2:
+        raise ValueError(f"item['content'] must be [T,C], got {content.shape}")
+    frames = content.shape[0]
+
+    def frame(name):
+        value = np.asarray(item[name], dtype=np.float32).reshape(-1)
+        if len(value) != frames:
+            raise ValueError(f"item['{name}'] must have {frames} frames, got {len(value)}")
+        return torch.as_tensor(value, device=dev)[None]
+
+    kw = dict(
+        content_features=torch.as_tensor(content, device=dev)[None],
+        f0_logf0=frame("f0_logf0"),
+        uv=frame("uv"),
+        loudness=frame("loudness"),
+        n_frames=frames,
+        num_steps=num_steps,
+        algorithm="euler",
+    )
+    if model.spk_n > 0:
+        kw["spk_id"] = torch.tensor([int(item.get("spk_id", 0))], device=dev)
+    if model.style_emb is not None:
         kw["style_id"] = torch.tensor([int(item.get("style_id", 0))], device=dev)
     mel = model.infer(**kw)
     return mel[0].cpu().numpy()
@@ -151,7 +211,9 @@ def build_item(phonemes, ph_dur_frames, f0_hz, *, spk_id=0, style_id=0,
         if not vuv_dict:
             raise ValueError("vuv_mode='phoneme' needs vuv_dict")
         pos = 0
-        for p, d in zip(phonemes, ph_durs):
+        # 長さは一致する想定（音素 1 つに duration 1 つ）。linter 導入で実行時の挙動を
+        # 変えないよう strict=False のまま明示する。厳格化は別途判断する。
+        for p, d in zip(phonemes, ph_durs, strict=False):
             if p in vuv_dict:
                 voiced[pos:pos + d] = bool(vuv_dict[p])
             pos += d

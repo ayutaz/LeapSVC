@@ -1,0 +1,321 @@
+# LeapSVC 評価計画
+
+## 1. 評価原則
+
+- train reconstruction と conversion quality を分ける。
+- target singer と同じ歌手の自己再構成だけで合格にしない。
+- held-out song と未知 source singer を必須にする。
+- 同一 source clip、同一 target、同一 loudness / silence 処理で比較する。
+- 数値指標だけでなく blind listening test と failure analysis を残す。
+- 選んだ成功例だけでなく、全評価 clip の manifest と出力を保存する。
+
+## 2. 比較対象
+
+| ID | システム | 目的 |
+|---|---|---|
+| A | source vocal | 内容・F0・タイミングの基準 |
+| B | target ground truth | target timbre の上限参考。平行録音がなければ別 phrase |
+| C | Seed-VC SVC baseline | 公開 SVC との比較 |
+| D | LeapSVC target-only | multi-singer pretraining の効果を測る |
+| E | LeapSVC base -> target fine-tune | 主提案 |
+| F | E + target-fine-tuned NHVSing | vocoder fine-tune の寄与を測る |
+| G | streaming student | offline teacher からの品質低下と遅延改善を測る |
+
+Seed-VC は archived repository の最新固定 revision、checkpoint、inference steps、F0 条件、reference clip を manifest に保存します。default と高速設定を混同しません。
+
+## 3. test set
+
+**日本語の層（2026-09-17 時点）。** 明瞭度（CER）は言語に依存するので、日本語で測れる層を
+揃えました。話者類似度・timing・F0・V/UV は言語に依存しないので VocalSet の結果も使えます。
+
+| 層 | 素材 | clip 数 | 明瞭度 | 回復率 |
+|---|---|---:|---:|---:|
+| **学習した曲そのもの**（診断用。品質の主張には使わない） | リツの学習曲 | 6 | +1.0 点 | ― |
+| **未知曲・自己再構成** | リツ hold-out | 6 | +10.7 点 | 91.4% |
+| **未知曲・既知話者** | `natsume` / `oniku` の未使用曲 | 50（うち測定 8） | +8.9 点 | 90.8% |
+| **未知話者** | **東北きりたん / No.7** | 20 | **+7.3 点** | **90.4%** |
+
+**層を名乗り分けること。** `tools/ja_testset.py` は `--seen-speaker` / `--unseen-speaker` の
+どちらかを**必須**にしています（決め打ちすると**一番言いたい主張がラベルとして間違って
+残ります**。実際に踏みました）。
+
+**測れていない層:** **男声・低音の未知話者。** きりたん（F0 p50 336 Hz）も No.7（324 Hz）も
+女声で target とほぼ同音域、**C3 より下は 0.0%** です。
+
+
+少なくとも次の軸を交差させます。
+
+- source singer: base 学習済み / 未知
+- source pitch: target range 内 / 上限付近 / 外側
+- phonetic content: slow / fast / 子音密度が高い
+- phonation: chest / falsetto / breathy / strong / weak
+- expression: long tone / vibrato / slide
+- recording: clean isolated / separated stem（使用する場合）
+
+target singer の train 曲、同一 take、近重複 clip は test から除外します。
+
+## 4. 客観指標
+
+| 観点 | 候補指標 | 注意 |
+|---|---|---|
+| pitch 保持 | F0 correlation、F0 RMSE、V/UV error | extractor 自身の誤りを別途監査する |
+| target similarity | speaker embedding cosine / SECS | **ECAPA-TDNN を 12 秒以上のクリップで使う**（下記の較正表）。encoder と長さの**両方**が要る |
+| intelligibility | CER（[`asr_cer.py`](../tools/asr_cer.py) + [`cer_breakdown.py`](../tools/cer_breakdown.py)） | **言語ごとに割ってから読む**（pooled の +16.8 点は言語の混合で、訂正後は日本語 +5 点前後 / 英語 +10〜19 点）。**上限中央が 10% を超える群には差を出さない**（ラテン語は上限自身が 23% 揃わない）。**変換側 CER が 100% を超えた clip は中央値に入れない**（ASR の暴走で、聞き取りにくさではない）。**上限は `--ceiling-from` で使い回すこと**（ボコーダーの乱数で run ごとに変わる） |
+| signal quality | SQUIM の STOI / PESQ / SI-SDR（[`tools/signal_quality.py`](../tools/signal_quality.py)） | **話し声で学習されている。** 絶対値ではなく上限との差だけを読む |
+| spectral | mel/STFT distance、MCD | parallel reference がある subset に限定 |
+| **音の明るさ** | **spectral centroid、帯域エネルギー比**（[`tools/audio_metrics.py`](../tools/audio_metrics.py)） | **source ではなく「GT mel をボコーダーに通した再合成」を上限の基準にする。** 内容・音高・V/UV の指標は高域の欠落を検知しない（M3 で実測） |
+| timing | onset のずれと**対応が付いた割合**（[`tools/timing_metrics.py`](../tools/timing_metrics.py)） | **ずれの分解能は hop（5.8 ms）。** 実測でずれは限界以下だったので `matched_ratio` を読む |
+| compute | 段別 RTF、peak VRAM（[`tools/rtf.py`](../tools/rtf.py)） | **段ごとに分解する。** 実測で最大の項はボコーダー（合計 0.654 中 0.355）、acoustic は 0.081 |
+| streaming | algorithmic latency、end-to-end latency、boundary error | 実機 audio I/O で測る |
+
+一つの総合点へ早期に集約せず、pitch・内容・target similarity・artifact・latency を別軸で報告します。
+
+**確認済み（2026-09-01）: 話者類似度は測れるようになりました。encoder とクリップ長の両方が要ります。**
+枠組みは [`tools/speaker_similarity.py`](../tools/speaker_similarity.py)、較正は
+[`tools/speaker_calibrate.py`](../tools/speaker_calibrate.py) で**再実行できます**（VocalSet
+20 歌手・excerpts/straight・各 3 本）。**上限**（target の別クリップどうし）・**下限**
+（無関係な話者）・回復率という、内容保持と同じ読み方をします。
+
+**合格条件は走らせる前に決めました:** 重なり（同一話者ペアの下位 5% を超える別話者・同性
+ペアの割合）が **20% 以下**。
+
+| encoder | クリップ長 | 同一話者 | 別話者・同性 | 別話者・異性 | 重なり | 判定 |
+|---|---:|---|---|---|---:|:--:|
+| wavlm-base-plus-sv | 6 s | 0.8307 ± 0.0832 | 0.7713 ± 0.1104 | 0.5199 ± 0.1296 | 83.3% | 不合格 |
+| wavlm-base-plus-sv | 12 s | 0.8856 ± 0.0670 | 0.8196 ± 0.0943 | 0.5314 ± 0.1323 | 77.0% | 不合格 |
+| ECAPA-TDNN | 6 s | 0.5415 ± 0.1331 | 0.3452 ± 0.1325 | 0.1816 ± 0.0976 | 56.9% | 不合格 |
+| **ECAPA-TDNN** | **12 s** | 0.6632 ± 0.0995 | 0.3891 ± 0.1369 | 0.1966 ± 0.1013 | **19.8%** | **合格** |
+| **ECAPA-TDNN** | **20 s** | 0.7096 ± 0.1037 | 0.4040 ± 0.1386 | 0.2109 ± 0.1096 | **17.3%** | **合格** |
+
+**どちらか一方では足りません。** x-vector は 12 秒にしても 77.0% で不合格、ECAPA も 6 秒では
+56.9% で不合格です。**2026-08-31 に「測れない」と結論したのは、6 秒で切って測っていたことが
+原因の半分でした。** クリップ長は encoder の選択と同じ重みを持つ設計パラメータとして扱います。
+
+**決定: 較正表を示さずに cosine を「話者類似度」として出さないこと。** また
+`similarity_report` は 12 秒未満のクリップを**拒否**します（較正の外だから）。
+
+**確認済み（2026-08-31、M4）: 明るさを符号つき平均で評価しないこと。** 上限より明るい clip と
+暗い clip が打ち消し合い、**平均は良く見えるのに実際は両方向へ外れている**ことが起きます
+（実測で範囲 −70% 〜 +33%）。**上限からの距離（絶対値）**で見ます。この誤りで「多 step にすると
+明るさが戻る」という結論を一度出しました。また **spectral centroid は測定時の移調条件に強く
+依存する**ので、`--transpose` の値を必ず併記します（同じ clip が 0 半音で 540 Hz、
++12 半音で 1196 Hz）。
+
+**確認済み（2026-08-30、M3）: 内容指標は音の劣化を検知しません。** 推論条件の不具合で spectral centroid が 620 → 368 Hz へ落ちたとき、content cos は 0.8217 → 0.8096 としか動かず、F0 相関も V/UV もほぼ無反応でした。**耳で「こもっている」と分かる差です。** 内容・音高の指標が揃って良いことを音質の根拠にしないでください。
+
+### M5 の実測（2026-09-01）: 上限を共有できない指標は 2 系で比べられない
+
+**確認済み:** 26 clip を両システムで測って分かった、この枠組みの実際の効き方です。
+
+**比べられた指標**（source か target 録音が基準）: 話者類似度・timing・F0 相関・半音差・V/UV。
+**比べられなかった指標**（自分の上限が基準）: CER・信号品質・明るさ。系が違うと
+「GT mel を自分のボコーダーに通した再合成」が別の量になるためです。
+
+**この非対称は failure taxonomy にも出ます。** LeapSVC は 26 中 8 clip に分類が付き、
+Seed-VC は 1 clip でしたが、**Seed-VC は CER と明るさを判定できない**（測った軸が少ない）
+だけです。**「破綻が少ない」と読まないこと。**
+
+### M5 の客観指標: 道具は 4 つとも作りました（2026-09-01）
+
+**確認済み:** [実行計画](svc-plan.md) M5 ゴール 2 が挙げる指標について、道具が無かった 4 つを
+実装しました。**どれも「上限（GT mel をボコーダーに通した再合成）との差」で読む形**にして
+あります。上限は [`svc_convert.py`](../tools/svc_convert.py) の `--self-check` が
+`*_vocoder_only.wav` として出します。
+
+| M5 が要求する指標 | 道具 | 状態 |
+|---|---|---|
+| F0 correlation / RMSE | [`m3_verify.py`](../tools/m3_verify.py)（`f0_corr` / `median_semitones`） | **ある** |
+| V/UV error | 同上（`uv_agree`） | **ある** |
+| 内容保持 | 同上（`content_cos` を上限・下限つきで） | **ある** |
+| 音の明るさ・帯域 | [`audio_metrics.py`](../tools/audio_metrics.py) + 上限 | **ある** |
+| speaker similarity | [`speaker_similarity.py`](../tools/speaker_similarity.py) + [較正](../tools/speaker_calibrate.py) | **ある**（較正通過） |
+| **timing** | [`timing_metrics.py`](../tools/timing_metrics.py) | **作った**（下記の限界に注意） |
+| **CER（明瞭度）** | [`asr_cer.py`](../tools/asr_cer.py) + [`cer_breakdown.py`](../tools/cer_breakdown.py) | **作った**（言語別に割って読む）。**系間比較は上限を共有してから**（2026-09-15） |
+| **信号品質** | [`signal_quality.py`](../tools/signal_quality.py) | **作った**（歌声への妥当性は未検証） |
+| **推論 RTF / peak VRAM** | [`rtf.py`](../tools/rtf.py) | **作った** |
+
+#### 実測で分かった各指標の限界（M5 で読むときの前提）
+
+**timing のずれは測定限界以下でした。** 分解能は hop（44.1 kHz / 256 で **5.8 ms**）で、
+M4 の ft10000・6 clip で**ずれの中央値がちょうど 5.8 ms = 1 フレーム**でした。**これを
+「ほぼずれていない」と読まないこと。** 読むべきは **`matched_ratio`（実測 69.1%）**で、
+**onset の 3 割は対応が付いていません**（消失・増加）。
+
+**CER は ASR の言語が素材と一致していないと全滅します。** VocalSet はイタリア語
+（Caro mio ben）・英語・ラテン語の楽曲で、`--language ja` を強制したところ source・変換・
+上限がすべて別物に書き起こされ、**CER は 3 clip とも 1.0** になりました。このとき**差は 0.0 に
+なり、「音響モデルは劣化させていない」と読めてしまいます。** そのため上限 CER が 0.5 を
+超えたら `ceiling_unusable` を立て、差を出さないようにしました。
+
+**日本語素材では機能します。** 波音リツの自己再構成 1 clip で **上限 0.0 / 変換 0.60**
+（差 +0.60）。上限が 0.0 ということはボコーダーと ASR は無罪で、**差はすべて音響モデルに
+帰属します。n=1 なので幅は読まないこと。**
+
+**信号品質（SQUIM）は話し声で学習されています。** 歌声への妥当性は未検証なので、**絶対値を
+音質として主張しません。** 上限との差だけを読みます（実測で 2 clip、`stoi` −0.118 / −0.066）。
+
+**RTF は段ごとに出します。** 実測（CPU / Windows / `torch.compile` 無効 / 10 秒 / 3 回の中央値）:
+
+| 段 | RTF |
+|---|---:|
+| content（ContentVec） | 0.081 |
+| f0（RMVPE） | 0.136 |
+| **flow（LeapSVC 本体）** | **0.081** |
+| **vocoder（NHVSing）** | **0.355** |
+| **合計** | **0.654** |
+
+**最大の項はボコーダーです。** 「1-step だから速い」は `rtf_acoustic_only` の話であって
+pipeline 全体ではありません（[主張ルール](svc-prior-art-license.md) 6 節）。`realtime_capable`
+は `rtf_total < 1` を見ているだけで、chunk 境界も audio I/O も連続運転も見ていません。
+**この旗だけで「リアルタイム」と書かないこと。**
+
+**README の RTF と混同しないこと。** [README](../README.md) の性能表は **SVS 経路を Apple
+Silicon 10 コアで**測ったもの（音響モデル 0.027 / ボコーダー < 0.1）で、上の表は **SVC 経路を
+Windows CPU で `torch.compile` 無効のまま**測ったものです。**機種も経路も違うので比較できません。**
+とくにボコーダーは 0.1 未満と 0.355 で 3.5 倍違います。SVC の数値を「LeapSinger は遅くなった」
+と読まないこと。**同じ機種で並べて測るまで、両者の差は機種差と区別できません。**
+
+**注意:** `content_cos` は明瞭度の代理であって CER ではありません。M3 で、耳で分かる劣化
+（centroid 620 → 368 Hz）に対して content cos は 0.8217 → 0.8096 としか動きませんでした。
+**内容指標が揃って良いことを「明瞭度が保たれた」の根拠にしないこと。**
+
+## 5. 主観評価
+
+### Blind test の質問
+
+1. どちらが target singer に似ているか。
+2. どちらが歌詞を聞き取りやすいか。
+3. どちらが自然で、buzz、metallic、phase、breath artifact が少ないか。
+4. source の音程と表現をどちらが保っているか。
+5. 総合的にどちらを選ぶか。
+
+**実施状況（2026-09-13）: 聴いたのは 3 と 5 だけです。**
+
+| 質問 | 状態 |
+|---|---|
+| 1 target への類似 | **実施（2026-09-15）。判定に至らず。** 6 / 12 ペアで中断し、**判定 4 票すべてが「後に聴いた側」**（A 0 / B 4）。評価者は「意味がないように思えます。同じボイスをずっと聞かされています」。**anchor（catch trial）を入れていなかったため、「2 系が同一」と「課題を遂行できていない」を区別できません** |
+| 2 聞き取りやすさ | 未実施（CER で代替。ただし**上限を共有できないので 2 系では比べられません**） |
+| **3 自然さ・artifact** | **実施**（26 ペア、N=1 非公式） |
+| 4 音程と表現の保持 | 未実施（F0 相関・V/UV・timing で代替。こちらは 2 系で比べられます） |
+| **5 総合** | **実施**（3 と同じ投票。**結果は Seed-VC 選好**、25 判定中 21） |
+
+**質問 1 を外した根拠は、後に測定誤りと分かった数値でした**（LeapSVC 0.4981 対
+Seed-VC 0.5912 → **訂正後 0.5899 対 0.5912 でほぼ同等**）。**投票の結果は取り下げません**が、
+**質問 1 は「測ってあるから不要」ではなくなりました**。加えて、実施した 3 / 5 は
+**明るさの差に交絡**していました（baseline は 26 clip すべて明るく、centroid 比の中央値 1.80）。
+
+**明るさは揃えられません** — 評価対象そのものだからです。できるのは**交絡として記録する**
+ことと、**明るさに引きずられにくい質問（質問 1）を別に立てる**ことだけです
+（[実行計画](svc-plan.md#2b-ここからの計画) の①）。
+
+### 実施条件
+
+- system 名を隠し、順序を randomize する。
+- **anchor（catch trial）を混ぜる。** target 本人の録音 対 無関係な話者のペアを入れて、
+  **判別できる耳であること**を先に確認する。**入れないと「2 系が同一」と「課題を遂行できて
+  いない」を区別できません**（2026-09-15 に実際に踏みました）。**実装済み**:
+  `blind_test.py prepare --anchor-target t1.wav ... --anchor-foil f1.wav ...`。正解は
+  `anchors.json` にだけ置かれ、**ページにも `key.json` にも出ません**。`tally` が別に採点し、
+  **合格線 75%** を下回ると読み方の警告を出します。**引き分けは不正解**、未記入は不正解に
+  しません。**anchor だけ両側を同じ sample rate へ対称に落とします**（片側だけ触ると帯域が
+  手がかりになるため）。
+- **上限は 1 度だけ作って使い回す**（`svc_convert.py --ceiling-from`）。NHVSing の ONNX は
+  **seed の無い乱数**を持つので、作り直すと必ず変わります（**CPU + 決定的モードでも一致
+  しません**）。実害として、同じ V3 の 2 つの run で **26 clip 中 6 本の上限 CER が 5 点を
+  超えてずれました**（最大 88 点）。`convert.json` の **`ceiling_comparable` が `false` の
+  記録どうしは比べられません**。
+- **持ち込み音源には `--match-loudness` を付ける。** 配信用に限らず**プロのスタジオ録音でも**
+  要ります（きりたん / No.7 は学習分布から中央値 **+0.60 σ** ずれ、付けないと明るさが
+  上限比 **0.71x**、付けると **0.93x**）。
+- **side の偏りを集計に出す。** `tally()` の `p_side` が系の p より小さいときは、
+  **系の勝敗を読む前に判別できていたのかを疑う**。**A → B の連結再生は構造的に B を
+  最後に置きます。**
+- loudness を揃え、無音長や file name から system が分からないようにする。
+- headphone / speaker、評価者の歌唱・音響経験を記録する。
+- 1 clip あたりの全比較数を制限し、疲労を管理する。
+- tie / 判定不能を許可する。
+- 評価者数、clip 数、信頼区間、除外規則を事前に決める。
+
+## 6. ablation
+
+- ContentVec vs HuBERT、encoder layer、feature normalization
+- UV あり/なし
+- loudness あり/なし、正規化方式
+- speaker condition あり/なし
+- harmonic/noise prior vs random/noise prior
+- 1-step vs 複数 step
+- SVS warm-start vs independent initialization
+- target-only vs multi-singer base
+- pitch/formant augmentation あり/なし
+- GAN あり/なし
+- NHVSing frozen vs target fine-tune
+- full-context teacher vs causal / limited-lookahead student
+
+一度に複数要素を変えず、同一 split・seed・更新 budget を使います。
+
+## 7. failure taxonomy
+
+| 分類 | 例 |
+|---|---|
+| content | 子音欠落、母音化、歌詞置換 |
+| pitch | octave error、裏声で drop、vibrato 平滑化 |
+| timbre | source leakage、target identity 不足、性別/formant 不整合 |
+| dynamics | 強弱消失、breath 過多、loudness pumping |
+| vocoder | buzz、metallic、high-frequency noise、クリック |
+| timing | onset 遅延、子音の先頭欠落、phrase 末尾切れ |
+| **音域外** | **source が C3（約 131 Hz）より低いときの崩れ。** 手元の素材はこの帯域が最大でも 3.6% しかなく（[データセット台帳](svc-dataset-ledger.md) 4b 節）、低い男声 source は学習分布の外側への外挿になる。**必ず観察項目に入れる** |
+| streaming | chunk boundary、state reset、buffer under/overrun |
+| data | accompaniment leakage、reverb imprint、duplicate leakage |
+
+failure clip は削除せず、category と suspected component を付けます。
+
+## 8. 合格条件
+
+**決定（2026-09-01、測定の前に確定）: 絶対的な数値閾値は置きません。** 手元のデータ量
+（CER n=1、信号品質 n=2 で `si_sdr` の符号が反転）では、根拠のない数を発明することに
+なるためです。かわりに **guard rail 方式**を採ります。
+
+| 役割 | 内容 |
+|---|---|
+| **主要な判定** | **blind preference**（M5 の目的が比較だから）。**N=1 の非公式 test** として実施し、**N を併記する** |
+| **guard rail** | content cos / 話者類似度の回復率 / F0 相関 / timing の対応率 の **4 つ** |
+| **「悪化」の定義** | **clip 間のばらつき（標準誤差）を超えて Seed-VC より低いこと** |
+| **主張の制限** | **preference で勝っても guard rail を 1 つでも落としていたら「より良い」とは書かない** |
+
+guard rail の 4 つは**すべて source か target 録音を基準**にしているので、Seed-VC の出力にも
+そのまま当たります（上限を共有する必要はありません）。詳細は
+[実行計画](svc-plan.md) M5「事前登録した判定規則」。
+
+**以下は依然として、満たすまで品質達成を宣言しません。**
+
+- 実音声の end-to-end pipeline が再現可能。
+- unseen-source / held-out-song で重大な内容崩壊がない。
+- **確認済み（2026-09-13）:** Seed-VC baseline に対する blind preference を記録済み。**26 ペア中 25 判定で Seed-VC 21 / LeapSVC 4 / 引き分け 1。** 以下は当初の設計。**N=1 の非公式 test** として
+  実施し（2026-09-01 決定）、**N を併記する**。ラベルを隠し、順序を randomize し、
+  **両システムの出力に同じ loudness 揃え**を当てる。**除外は技術的失敗のみ**（無音・NaN・
+  長さ不一致）で、除外した clip は理由付きで残す。
+  **聴いて選ぶのは話者類似度ではありません**（客観指標で測り終わっているため）。
+  **自然さ・こもり / ざらつき・歌としての破綻**の 3 点で、指標が拾えない差を記録します。
+- target similarity の改善が pitch / intelligibility の悪化だけで得られていない。
+  **前提として、使う speaker encoder が上限・下限・重なりの較正を歌声で通っていること**（4 節）。
+- 未知 source の内容保持が base から落ちていないこと。**M4 で、target の再現と未知 source の
+  保持が単調に逆へ動くことを実測しました。**片方だけの改善を品質向上と呼ばないこと。
+- streaming では teacher との差と実測遅延を同時に提示できる。
+
+## 9. 報告テンプレート
+
+各評価 report に次を含めます。
+
+```text
+date / commit / dirty state
+systems and exact checkpoints
+dataset and test manifest
+preprocessing revisions
+hardware / software / seed
+objective metrics with per-group breakdown
+blind-test protocol and results
+failure counts and representative samples
+confirmed conclusions
+inconclusive observations
+next experiment
+```

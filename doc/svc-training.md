@@ -1,0 +1,191 @@
+# LeapSVC 学習計画
+
+## 1. 推奨する段階
+
+```text
+Phase 0  前処理・小規模 overfit smoke
+Phase 1  multi-singer offline base pretraining
+Phase 2  target singer fine-tune
+Phase 3  optional NHVSing target fine-tune
+Phase 4  offline quality gate
+Phase 5  streaming student distillation
+```
+
+品質比較前に Phase 0〜3 の実行記録を残し、Phase 4 を通過するまで Phase 5 のリアルタイム最適化を主目的にしません。
+
+**決定（2026-09-14）: Phase 5（= M6）は直列経路から外し、起動条件つきにしました。**
+must ではありません。起動条件は「同一 test set の blind comparison で preference が
+baseline を上回り、guard rail を 1 つも落としていないこと」です
+（[実行計画](svc-plan.md#m6-streaming-student)）。**着手するときの最初の作業は蒸留では
+なくボコーダーの実行経路の測定です** ―― GPU の end-to-end RTF 0.464 のうち
+**ボコーダーが 0.432（93%）**で、**蒸留は lookahead に効き RTF には効きません**。
+
+## 2. Phase 0: 前処理と overfit smoke
+
+1. 権利確認済みの短い isolated vocal から shard を作る。
+2. 1〜数 phrase を train とし、loss が十分低下するまで overfit する。
+3. mel と WAV を保存し、F0 timing、無声区間、長さを確認する。
+4. 同じ入力・seed・checkpoint で再実行し、再現性を確認する。
+5. train と infer の特徴量正規化が同一であることを検証する。
+
+この段階の成功は一般化や音質を示しません。loader、condition、flow、vocoder の実配線を検証する smoke です。
+
+## 3. Phase 1: multi-singer base
+
+**推奨:** 20〜50 人、合計 100〜300 時間を最初の本学習案とし、より小さい corpus で先に recipe を確定します。
+
+**確認済み（2026-08-30 実施、2026-08-31 に 60,000 step へ延長）:** より小さい corpus として **23 話者 / 約 18 時間**（GTSinger 全 9 言語 20 歌手 + 日本語 3 DB、1 歌手あたり 0.75 時間）で recipe を確定しました。`balance_speakers: true` の speaker-balanced sampling で **60,000 step** 完走し、未知 source（VocalSet）でも内容が崩壊しないことを確認しています。詳細は [実行計画](svc-plan.md) M3 の進捗節。
+
+**確認済み: 出力が「暗い」のは学習不足でも過平滑でもなく、入力 F0 との結合です。** 当初は eval loss が下降中であることから**学習不足**、`laplacian_var_ratio` 0.869 から**過平滑**を疑いましたが、**どちらも 2026-08-31 の測り直しで否定されました**。content と loudness を固定して F0 だけを ±12 半音する交差実験で、男性 source の spectral centroid が 540 → **1196 Hz**、女性 source が 1067 → 378 Hz と動きます。**出力のスペクトル傾斜は条件づけた F0 に強く従う**ということです。
+
+含意が 2 つあります。**(1) 学習を続けても直りません**（60,000 step まで延ばして確認済み）。**(2) 男女をまたぐ変換では `--transpose` で source F0 を移調してから測ること。** 移調なしの数値は、モデルの品質ではなく source と target の音域差を測っています。モデル側で結合を緩めるなら**特徴抽出前**の pitch augmentation が要ります（**未実装**。SVC では online `pitch_aug` を使えません）。
+
+```text
+Singer A WAV -> content/F0/loudness + speaker A -> mel A
+Singer B WAV -> content/F0/loudness + speaker B -> mel B
+Singer C WAV -> content/F0/loudness + speaker C -> mel C
+```
+
+speaker-balanced sampling を使い、長時間話者だけが batch を支配しないようにします。性別・音域・言語の比率だけでなく、録音条件の偏りも監視します。
+
+初期 loss:
+
+- rectified-flow loss
+- mel reconstruction loss
+- 必要に応じて V/UV / spectral auxiliary loss
+
+GAN は baseline が安定し、artifact の比較が可能になった後に別 run で導入します。
+
+## 4. Phase 2: target fine-tune
+
+1. base checkpoint を immutable input として保存する。
+2. target 専用の run directory を作る。
+3. 低い learning rate と短い validation interval から始める。
+4. target similarity と unseen-source intelligibility の両方を見る。
+5. train reconstruction だけが改善し、未知 source が悪化する場合は早期停止する。
+
+target singer だけでゼロから学習する PoC も可能ですが、SSL content 内の target timbre をそのまま利用する shortcut を学ぶ危険があります。そのため最終モデルでは base pretraining を推奨します。
+
+**確認済み（2026-08-31 実施、M4）: 上の 4 と 5 は「起こり得る失敗」ではなく、実際に起きます。**
+波音リツへ 20,000 step の fine-tune を行ったところ、**target らしさと未知 source の内容保持が
+単調に逆へ動きました。**
+
+| step | 話者類似度（回復率） | 自己再構成（上限比） | 未知 source の content cos |
+|---|---:|---:|---:|
+| base | 45.1% | 94.8% | 0.8599 |
+| **10,000（採用）** | **54.9%** | 96.8% | **0.8440** |
+| 20,000 | 58.0% | 98.1% | 0.8359 |
+
+**話者類似度は 2026-09-01 に測りました**（ECAPA-TDNN・12 秒以上のクリップ。
+[評価計画](svc-evaluation.md) 4 節の較正表）。**target らしさが上がること自体は確認済み**で、
+trade-off の両側に数字が付いています。
+
+したがって手順 3〜5 は次の形にします。
+
+- **選択規則を実験の前に config へ書く。** [`configs/svc_target_ft.yaml`](../configs/svc_target_ft.yaml)
+  の header に「未知 source の cos が base から 0.02 を超えて落ちた checkpoint は選ばない」と
+  書いてから走らせました。M4 ではこれが 15,000 step で発動しています。
+- **train loss は候補の絞り込みにしか使わない。** M4 では train / eval loss とも 20,000 step が
+  最小で、**それだけで選ぶと最悪の checkpoint を選びます**。
+- **save_interval を十分細かく取る。** 規則が発動した位置の手前に候補が無いと、選びようがありません
+  （M4 は 2,500 step ごと）。
+- **明るさは移調あり・なしの両方で記録する。** fine-tune では F0 依存の傾斜は直りませんでした
+  （未知 source の偏差 33.7 → 37.5）。
+- **次からは選択規則に話者類似度も入れられます。** M4 の時点では測れなかったので内容保持だけを
+  規則にしましたが、いまは両方を事前登録できます。**内容保持の下限と類似度の下限の両方**を
+  置くのが妥当です（片方だけだと、もう片方を犠牲にした checkpoint が通ります）。
+- **異性間の変換は伸びにくい。** 同性 source の回復率が +17.4 点 上がったのに対し、
+  異性は +8.4 点でした（移調しても）。fine-tune の効果を 1 つの平均で見ないこと。
+
+## 5. 既存 SVS checkpoint の warm-start
+
+### 再利用しやすい部分
+
+- harmonic/noise excitation の設定と実装
+- rectified-flow backbone
+- mel reconstruction / flow loss
+- optional discriminator
+- NHVSing interface
+
+### 直接再利用できない部分
+
+- phoneme embedding
+- duration に基づく length regulation
+- phoneme encoder の入力 projection
+
+### 提案する手順
+
+1. SVS flow と excitation を読み込む。
+2. SSL encoder、flow、vocoder を一時的に凍結する。
+3. ContentAdapter が旧 phoneme condition と互換な hidden 表現を出すよう、利用可能なら condition distillation を行う。
+4. flow を解凍し、SVC reconstruction / flow loss で共同学習する。
+5. 独立初期化 baseline と比較する。
+
+**未実装:** 現在の `--init_from --finetune` は model 全体を同一構造として読み込む前提であり、SVS から SVC へ安全に部分ロードする機能ではありません。部分 weight mapping、missing/unexpected key の allowlist、ロード結果の記録とテストが必要です。
+
+## 6. Phase 3: NHVSing fine-tune
+
+NHVSing の既存重みを固定した baseline を先に作ります。次の場合に限り target fine-tune を比較します。
+
+- target singer の高音や裏声で vocoder artifact が系統的に出る。
+- ground-truth mel を入力しても同じ artifact が出る。
+- acoustic model の誤差と vocoder の誤差を切り分けられる。
+
+vocoder fine-tune は target similarity を上げる可能性がありますが、mel 分布への過適合、データ規約、重み配布条件を別に確認します。
+
+## 7. Phase 4: offline quality gate
+
+[評価計画](svc-evaluation.md) に従い、同一 source、同一 target、同一音量処理で baseline を比較します。held-out song と未知 source singer を必須とします。最良 checkpoint を train loss だけで選びません。
+
+**音の明るさ（spectral centroid と帯域比）を必ず含めます。** 内容・音高の指標は高域の欠落を検知しないことが M3 で分かっています（[評価計画](svc-evaluation.md) 4 節）。
+
+## 8. Phase 5: streaming distillation
+
+**未実装:** teacher の full-context 出力を基準に、causal または limited-lookahead student を学習します。
+
+候補:
+
+- chunk-aware training と state cache
+- teacher mel / velocity distillation
+- boundary-aware loss
+- random chunk length と left-context augmentation
+- vocoder の overlap-add / stateful inference
+
+streaming student は offline teacher と同じ test set で比較し、品質低下と遅延低下を同時に報告します。
+
+## 9. 実行環境と初期コマンド
+
+**決定:** 学習は vast.ai の Linux GPU インスタンスで行います。手元の Windows 機は開発・推論・検証用です。新規インスタンスの用意は [`tools/vast_bootstrap.sh`](../tools/vast_bootstrap.sh) が行います（uv 導入、`uv.lock` どおりの同期、CUDA 疎通、倍音和の `torch.compile` 経路が効いているかの確認、単体テストまで）。
+
+**注意:** インスタンスのディスクは揮発します。`log/<run>/ckpt_*.pt` と TensorBoard の events は実験記録の一部なので、実験中に外部ストレージへ退避します。
+
+shard の生成から学習までの例です。前処理は 2 段構成で、`--from-cache` を使えば 2 段目
+（整列・正規化・256 次元の切り出し）だけを回せます。
+
+```bash
+uv run python -m preprocess.svc.run --wav-dir download/ritsu --out data/target --device cuda
+uv run python -m train --config configs/svc_base.yaml \
+  --data_dirs data/target \
+  --run_name svc_target \
+  --out_root log \
+  --device cuda
+```
+
+`--from-cache <out>/_cache` を渡すと 2 段目だけを回せます。
+
+multi-singer の場合は `model.n_speakers`、`data.spk_map`、`train.balance_speakers` を corpus に合わせます。
+
+## 10. 実験記録
+
+各 run で最低限保存します。
+
+- Git commit / dirty diff、config の完全コピー
+- dataset manifest / split / checksums
+- dependency lock（`uv.lock` と `.python-version`）と CUDA / driver / GPU。現在の基準環境は [実装状況](svc-implementation-status.md) の「実行環境」表
+- seed、AMP、batch frames、peak VRAM
+- init checkpoint と load report
+- train/validation curve、生成 sample、failure list
+- best checkpoint の選択規則
+- 途中再開の履歴
+
+**決定:** 高い learning rate や overfit 継続は baseline checkpoint と出力先を分け、元の結果を上書きしません。

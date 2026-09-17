@@ -9,6 +9,13 @@ dist/
 .pytest_cache/
 .ipynb_checkpoints/
 
+# ── Secrets / local env（API トークン等。絶対にコミットしない）──────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
 # ── Virtual environments ────────────────────────────────────────────────
 .venv/
 venv/
@@ -25,6 +32,7 @@ ENV/
 
 # ── Datasets (users download the DBs and run preprocess themselves) ─────
 data/
+download/
 *.npz
 *.wav
 *.flac
@@ -39,6 +47,13 @@ data/
 *.onnx
 !checkpoints/nhv_v3_2.onnx
 !checkpoints/nhv_v3_2x.onnx
+!checkpoints/nhv_v3_1.onnx
+!checkpoints/nhv_v3_1x.onnx
+
+# ── HuggingFace caches that external tools write into checkpoints/ (Seed-VC does
+#    this, relative to its cwd). Multi-GB, and they belong to other projects.
+checkpoints/hf_cache/
+checkpoints/models--*/
 
 # ── Distributable voicebanks / release assets (GitHub Releases Assets, not tracked)
 checkpoints/leapsinger_oni_nat_ritsu/
@@ -94,6 +109,7 @@ dict/ja_phoneme_vuv.yaml
 notebooks/exported_model/
 
 # ── Scratch / temporary ─────────────────────────────────────────────────
+.smoke/
 scratch/
 tmp/
 *.tmp
@@ -101,3 +117,6 @@ onnxruntime_profile_*.json
 
 # Private: former base trainer, superseded by the GAN train.py
 /train_old.py
+
+# ── M0 の素材置き場（公開コーパスのダウンロード先。コミットしない）──
+.m0data/

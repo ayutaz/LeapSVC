@@ -1,0 +1,1202 @@
+#!/usr/bin/env python3
+"""blind preference test を用意し、集計する（[実行計画](../doc/svc-plan.md) M5 ゴール 3）。
+
+    # 1. 聴く用のファイルと採点シートを作る（どちらが A かは分からない形で並ぶ）
+    uv run python tools/blind_test.py prepare --a out/m5/leapsvc --b out/m5/seedvc \
+      --a-name leapsvc --b-name seedvc --out out/m5/blind --seed 0
+
+    # 2. out/m5/blind/sheet.csv の vote 列に A / B / tie を書いてから
+    uv run python tools/blind_test.py tally --sheet out/m5/blind/sheet.csv \
+      --key out/m5/blind/key.json --out out/m5/blind/result.json
+
+**評価者は 1 名（開発者）です**（2026-09-01 決定）。**N=1 の非公式 preference test** として
+報告し、**MOS とは呼びません**。それでも blind の条件は満たします。
+
+| 条件 | 実装 |
+|---|---|
+| ラベルを隠す | 提示ファイル名は `pair03_A.wav` の形。**system 名が出ない** |
+| 左右を入れ替える | clip ごとに A / B の割り当てを randomize。常に片方が A だと順序の癖が preference に化ける |
+| 順番を混ぜる | clip の並びも shuffle。曲順で聴くと後半に慣れが出る |
+| 復元できる | 割り当ては `key.json` に残す。**採点シートには入れない** |
+
+**引き分けと未記入を捨てません。** 捨てると「差が無かった」ことが見えなくなります。
+
+**符号検定の p 値は参考値**です。評価者 1 名なので、独立なのは clip であって人ではありません。
+**「preferred」と書くときは必ず N=1 と clip 数を併記します。**
+"""
+from __future__ import annotations
+
+import random
+import sys
+from collections.abc import Sequence
+from math import comb
+from pathlib import Path
+from typing import Any
+
+
+def match_loudness(a, b, *, peak_limit: float = 0.95):
+    """2 本の波形を**同じ RMS へ揃える**。
+
+    **揃えないと blind になりません。** 実測で LeapSVC の出力は Seed-VC の 5.4 倍大きく
+    （RMS 0.143 対 0.027）、**音量だけで system を当てられる状態**でした。人は大きいほうを
+    好むので、preference が音量の選好に化けます。
+
+    **クリップさせません。** 揃えるために持ち上げて 1.0 を超えると、歪みが preference に
+    化けます。両方が `peak_limit` に収まる範囲で、できるだけ大きい共通の RMS を選びます。
+    """
+    import numpy as np
+
+    xs = [np.asarray(x, dtype=np.float32).copy() for x in (a, b)]
+    rms = [float(np.sqrt(np.mean(x ** 2))) for x in xs]
+    peak = [float(np.abs(x).max()) for x in xs]
+    if min(rms) <= 1e-9:
+        return tuple(xs)                       # 無音が混ざっていたら触らない
+
+    # 各波形が peak_limit を超えない最大の RMS。その最小値を共通の目標にする。
+    headroom = [peak_limit / p * r for p, r in zip(peak, rms, strict=True) if p > 1e-9]
+    target = min(headroom) if headroom else min(rms)
+    return tuple((x * (target / r)).astype(np.float32) for x, r in zip(xs, rms, strict=True))
+
+
+def concat_pair(a, b, *, sr: int, gap_sec: float = 0.7):
+    """A -> 無音 -> B を 1 本に繋ぐ。**音量は触りません**（揃えた意味が消えるため）。
+
+    26 ペアを A/B 別ファイルで聴くと切り替えの手間が大きいので、繋いだ形も置きます。
+    """
+    import numpy as np
+
+    gap = np.zeros(int(gap_sec * sr), dtype=np.float32)
+    return np.concatenate([np.asarray(a, dtype=np.float32),
+                           gap,
+                           np.asarray(b, dtype=np.float32)]).astype(np.float32)
+
+
+SHEET_HEADER = "pair,clip,vote  # vote に A / B / tie を書く"
+_VALID_VOTES = ("", "A", "B", "tie")
+
+
+def read_sheet(path):
+    """採点シートを読む。**列名の説明を落としてから引く。**
+
+    `prepare` が書くヘッダは `pair,clip,vote  # vote に A / B / tie を書く` です。
+    `csv.DictReader` は 3 列目の名前を**説明ごと**受け取るので、`row["vote"]` を引くと
+    **全件が未記入**になります。実際に 26 票を丸ごと落としました（集計が 0 勝 0 勝、
+    未記入 26 と出て気づきました）。**票が消えても例外にならない**のが厄介な点です。
+
+    `vote` で**始まる**列を票とみなします。`note_vote` のように途中に含むだけの列は
+    採りません（別の値が票になるため）。票の列が無ければ落とします。
+    """
+    import csv
+
+    rows = []
+    with open(path, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        names = reader.fieldnames or []
+        vote_col = next((n for n in names if n.strip().lower().startswith("vote")), None)
+        if vote_col is None:
+            raise ValueError(f"{path}: vote 列がありません（見出し: {names}）")
+        pair_col = next((n for n in names if n.strip().lower().startswith("pair")), "pair")
+        clip_col = next((n for n in names if n.strip().lower().startswith("clip")), "clip")
+        for row in reader:
+            pair = (row.get(pair_col) or "").strip()
+            if not pair:
+                continue
+            rows.append({"pair": pair, "clip": (row.get(clip_col) or "").strip(),
+                         "vote": (row.get(vote_col) or "").strip()})
+    return rows
+
+
+def find_source(root, clip: str):
+    """`<曲>__<clip>_source.wav` を 1 つだけ取る。
+
+    **前方一致にしません。** `unseen1` が `unseen10` に当たると、**別 clip の変換元**を
+    聴かせることになります。区切りの `__` と `_source.wav` を含めて厳密に照合します。
+
+    変換元は**両方の系で同じ入力**なので、聴かせても A / B の正体は漏れません。
+    """
+    from pathlib import Path as _P
+
+    hits = sorted(_P(root).glob(f"*__{clip}_source.wav"))
+    if len(hits) > 1:
+        raise ValueError(f"{clip}: 変換元が {len(hits)} 個あります（{[h.name for h in hits]}）")
+    return hits[0] if hits else None
+
+
+_ALLOWED_DIRS = ("audio/", "paired/", "context/")
+
+
+def _check_path(path: str, what: str) -> str:
+    """ページから指してよい場所か検査する。
+
+    **blind の穴を 2 つ塞ぎます。**
+
+    1. `out/m5/leapsvc/...` のような元ディレクトリを直接指すと、**パスに system 名が
+       出ます**。中立な名前で `context/` へ複写したものだけを指させます。
+    2. 上限（`*_vocoder_only.wav`）は **LeapSVC 自身のボコーダーの音**です。参照として
+       聴かせると、そのボコーダーの癖で A / B のどちらが LeapSVC かを当てられます。
+    """
+    p = str(path).replace("\\", "/")
+    if "vocoder_only" in p:
+        raise ValueError(f"{what}: 上限（{p}）は聴かせられません。"
+                         "LeapSVC 自身のボコーダーの音なので、系を当てる手がかりになります")
+    if not p.startswith(_ALLOWED_DIRS):
+        raise ValueError(f"{what}: {p} は blind ディレクトリの外です。"
+                         f"パスに system 名が出るので、{'/'.join(_ALLOWED_DIRS)} へ"
+                         "中立な名前で複写してから指すこと")
+    return p
+
+
+# **質問が違えば別の test です。** 何を聞いたかを記録しないと、result.json が 2 つ並んだ
+# ときにどちらの結果か分からなくなります。票の保存先も質問ごとに分けます ――
+# 同じ localStorage を使うと、**前の質問の票が黙って埋まります**（例外は出ません）。
+QUESTIONS: dict[str, dict[str, Any]] = {
+    "preference": {
+        "title": "blind preference test",
+        "lead": "同じ 1 本の歌を、2 つの系がそれぞれ変換した結果です。"
+                "どちらがどの系かは表示されません。",
+        "note": ('<b>「target に似ているか」では選びません。</b>'
+                 '話者類似度は客観指標で測り終わっています。ここで聴くのは'
+                 '<b>指標が拾えないもの</b>です'
+                 '―― <b>自然さ</b>（声として不自然でないか）、<b>こもり / ざらつき</b>'
+                 '（高域の欠落、ノイズ、金属的な響き）、<b>歌としての破綻</b>'
+                 '（音程の揺れ、子音の消失、途切れ）。<br>'
+                 '<b>引き分けは空欄ではなく tie。</b> 集計が区別します'
+                 '（差が無かったこと自体が結果です）。'
+                 '<code>key.json</code> は集計まで開かないでください。'),
+        # **2026-09-14 に「A が近い」から直しました。** 警告文が「似ているかでは選ばない」
+        # と言っているのにボタンが「近い」で、指している軸が食い違っていました。
+        # M5 で実際に表示したページは `out/m5/blind/listen.html` に残っています。
+        "vote_a": "A が良い", "vote_b": "B が良い",
+        "storage": "leapsinger-blind-votes",
+        "sheet": "out/m5/blind/sheet.csv",
+        "needs_target_ref": False,
+    },
+    "similarity": {
+        "title": "blind similarity test",
+        "lead": "同じ 1 本の歌を、2 つの系がそれぞれ変換した結果です。"
+                "どちらがどの系かは表示されません。",
+        "note": ('<b>聞くのは「似ているか」だけです。</b> 上の'
+                 '<b>参照（target 本人の録音）</b>を基準に、'
+                 '<b>声の持ち主として同じ人に聞こえるほう</b>を選んでください。<br>'
+                 '<b>うまさ・きれいさ・聴きやすさでは選ばないでください</b> ―― '
+                 'それは別の質問で、すでに聴き終わっています。'
+                 '迷ったら<b>声色・声の太さ・その人らしい癖</b>で。<br>'
+                 '<b>引き分けは空欄ではなく tie。</b> 集計が区別します'
+                 '（差が無かったこと自体が結果です）。'
+                 '<code>key.json</code> は集計まで開かないでください。'),
+        "vote_a": "A が似ている", "vote_b": "B が似ている",
+        # **preference と別の名前空間。** 同じにすると前回の票が復元されます。
+        "storage": "leapsinger-blind-votes-similarity",
+        "sheet": "out/m5/blind_sim/sheet.csv",
+        # 「似ている」は基準が無ければ判断できない。**黙って基準なしで聴かせない。**
+        "needs_target_ref": True,
+    },
+}
+
+
+def listen_page(rows: Sequence[dict], *, title: str | None = None,
+                references: Sequence[dict] = (), question: str = "preference",
+                sheet_path: str | None = None) -> str:
+    """ブラウザで聴いて投票するページを組み立てる（`out/m5/blind/listen.html`）。
+
+    **key.json の行を渡すと落とします。** key には `A` / `B` に system 名が入っており、
+    ページへ埋めると **blind が崩れます**。採点シート側の行（`pair` / `clip` / `vote`）
+    だけを受け取ります。
+
+    音声は `<audio src="audio/pairNN_A.wav">` の相対参照です。`file://` では `fetch`
+    が塞がれるので、行は **HTML に直接埋め込みます**（ページ単体で開けること）。
+
+    投票は localStorage に持ち、`sheet.csv` と同じ形で書き出します。**並べ替えません** ―
+    prepare が shuffle 済みで、ページが並べ直すと曲順の癖が preference に戻ります。
+    """
+    import json
+
+    if question not in QUESTIONS:
+        raise ValueError(f"知らない質問です（{question!r}）。"
+                         f"{sorted(QUESTIONS)} のいずれか。**黙って preference に落とすと、"
+                         "別の質問を聞いたつもりの票が貯まります**")
+    q = QUESTIONS[question]
+    rows = list(rows)
+    if not rows:
+        raise ValueError("行がありません")
+    clean = []
+    for r in rows:
+        if "A" in r or "B" in r:
+            raise ValueError(f"key.json の行を渡しています（{r.get('pair')}）。"
+                             "答えがページに埋まるので受け取れません")
+        vote = str(r.get("vote") or "").strip()
+        if vote not in _VALID_VOTES:
+            raise ValueError(f"{r.get('pair')}: vote が {vote!r}。A / B / tie / 空 のみ")
+        pair = str(r["pair"])
+        # **音声の場所は data に持たせます。** JS で組み立てるとページ本文にファイル名が
+        # 出ず、欠けているものを目視で確認できません。
+        item = {"pair": pair, "clip": str(r["clip"]), "vote": vote,
+                "a": f"audio/{pair}_A.wav", "b": f"audio/{pair}_B.wav",
+                "ab": f"paired/{pair}_AB.wav"}
+        if r.get("source"):
+            item["source"] = _check_path(r["source"], f"{pair} の変換元")
+        clean.append(item)
+
+    refs = [{"label": str(x["label"]), "path": _check_path(x["path"], "参照")}
+            for x in references]
+    if q["needs_target_ref"] and not refs:
+        raise ValueError(
+            f"{question}: 参照（target 本人の録音）がありません。"
+            "「似ているか」は基準が無ければ判断できないので、基準なしでは聴かせません")
+
+    data = json.dumps(clean, ensure_ascii=False, indent=1)
+    return _PAGE_TEMPLATE.replace("__TITLE__", title or q["title"]) \
+                         .replace("__H1__", q["title"]) \
+                         .replace("__LEAD__", q["lead"]) \
+                         .replace("__NOTE__", q["note"]) \
+                         .replace("__VOTE_A__", q["vote_a"]) \
+                         .replace("__VOTE_B__", q["vote_b"]) \
+                         .replace("__SHEET__", sheet_path or q["sheet"]) \
+                         .replace("__STORAGE__", json.dumps(q["storage"])) \
+                         .replace("__HEADER__", json.dumps(SHEET_HEADER, ensure_ascii=False)) \
+                         .replace("__REFS__", json.dumps(refs, ensure_ascii=False, indent=1)) \
+                         .replace("__ROWS__", data)
+
+
+_PAGE_TEMPLATE = r"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+ :root{color-scheme:dark;--bg:#14161a;--fg:#e8eaed;--dim:#9aa0a6;--line:#2a2e35;
+       --acc:#7cc4ff;--ok:#7ddc8f;--tie:#d9b45b}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--fg);
+      font:15px/1.65 system-ui,"Segoe UI","Yu Gothic UI",sans-serif}
+ .wrap{max-width:760px;margin:0 auto;padding:24px 20px 64px}
+ h1{font-size:19px;margin:0 0 4px}
+ .sub{color:var(--dim);font-size:13px;margin:0 0 20px}
+ .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:14px 0 6px}
+ .bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .2s}
+ .count{color:var(--dim);font-size:13px;display:flex;justify-content:space-between}
+ .card{border:1px solid var(--line);border-radius:12px;padding:20px;margin:18px 0;
+       background:#191c21}
+ .pair{font-size:22px;font-weight:600;letter-spacing:.02em}
+ .clip{color:var(--dim);font-size:13px;margin-top:2px}
+ .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+ button{font:inherit;color:var(--fg);background:#232830;border:1px solid var(--line);
+        border-radius:9px;padding:11px 16px;cursor:pointer}
+ button:hover{border-color:var(--acc)}
+ button:disabled{opacity:.4;cursor:default}
+ .play{min-width:120px}
+ .play.on{border-color:var(--acc);background:#1d2c3a}
+ .vote{flex:1;min-width:110px;font-weight:600}
+ .vote[data-on="1"]{background:#1e3326;border-color:var(--ok);color:var(--ok)}
+ .vote.tie[data-on="1"]{background:#332c18;border-color:var(--tie);color:var(--tie)}
+ .nav{display:flex;justify-content:space-between;gap:10px;margin-top:8px}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px;
+       margin-top:10px}
+ .grid button{padding:7px 4px;font-size:12px;text-align:center}
+ .grid button.done{border-color:var(--ok);color:var(--ok)}
+ .grid button.cur{background:#1d2c3a;border-color:var(--acc)}
+ .keys{color:var(--dim);font-size:12px;margin-top:14px}
+ .warn{border-left:3px solid var(--tie);padding:10px 14px;color:var(--dim);font-size:13px;
+       background:#1c1a15;border-radius:0 8px 8px 0;margin:16px 0}
+ textarea{width:100%;height:150px;background:#0f1114;color:var(--fg);border:1px solid var(--line);
+          border-radius:8px;padding:10px;font:12px/1.5 ui-monospace,Consolas,monospace}
+ kbd{background:#232830;border:1px solid var(--line);border-radius:4px;padding:1px 6px;
+     font:12px ui-monospace,Consolas,monospace}
+</style></head><body><div class="wrap">
+<h1>__H1__</h1>
+<p class="sub">__LEAD__</p>
+
+<div class="warn">__NOTE__</div>
+
+<div id="ctx"></div>
+
+<div class="bar"><i id="fill"></i></div>
+<div class="count"><span id="done"></span><span id="pos"></span></div>
+
+<div class="card">
+ <div class="pair" id="pair"></div>
+ <div class="clip" id="clip"></div>
+ <div class="row">
+  <button class="play" id="pAB">A → B を続けて <span style="color:var(--dim)">(1)</span></button>
+  <button class="play" id="pA">A だけ <span style="color:var(--dim)">(2)</span></button>
+  <button class="play" id="pB">B だけ <span style="color:var(--dim)">(3)</span></button>
+  <button id="stop">停止 <span style="color:var(--dim)">(0)</span></button>
+ </div>
+ <div class="row">
+  <button class="vote" data-v="A">__VOTE_A__ <span style="color:var(--dim)">(A)</span></button>
+  <button class="vote" data-v="B">__VOTE_B__ <span style="color:var(--dim)">(B)</span></button>
+  <button class="vote tie" data-v="tie">引き分け <span style="color:var(--dim)">(T)</span></button>
+ </div>
+ <div class="nav">
+  <button id="prev">← 前へ</button><button id="next">次へ →</button>
+ </div>
+ <p class="keys">キー: <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 再生 / <kbd>4</kbd> 変換元 / <kbd>A</kbd><kbd>B</kbd><kbd>T</kbd> 投票
+  （投票すると自動で次へ）/ <kbd>←</kbd><kbd>→</kbd> 移動</p>
+</div>
+
+<p class="keys" style="margin-top:0">「A → B」は <b>同じ歌の A の変換結果 → 無音 0.7 秒 → B の変換結果</b>を
+1 本にしたものです。<b>音量は揃えてあります</b>（大きいほうを選ばないため）。</p>
+
+<div class="grid" id="grid"></div>
+
+<h2 style="font-size:16px;margin:28px 0 6px">書き出し</h2>
+<p class="sub" style="margin:0 0 10px">全部埋めたら、この内容を <code>__SHEET__</code> へ上書きします。</p>
+<div class="row" style="margin-top:0">
+ <button id="dl">sheet.csv をダウンロード</button>
+ <button id="copy">クリップボードへコピー</button>
+ <button id="clear">投票を全消去</button>
+</div>
+<textarea id="csv" readonly></textarea>
+
+<audio id="au"></audio>
+</div><script>
+const ROWS = __ROWS__;
+const REFS = __REFS__;
+const HEADER = __HEADER__;
+const KEY = __STORAGE__;
+const au = document.getElementById("au");
+let i = 0, votes = {};
+try { votes = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { votes = {}; }
+for (const r of ROWS) { if (r.vote && !votes[r.pair]) votes[r.pair] = r.vote; }
+
+const $ = id => document.getElementById(id);
+function save() { try { localStorage.setItem(KEY, JSON.stringify(votes)); } catch (e) {} }
+
+function csv() {
+  const nl = String.fromCharCode(10);
+  const lines = [HEADER];
+  for (const r of ROWS) lines.push(r.pair + "," + r.clip + "," + (votes[r.pair] || ""));
+  return lines.join(nl) + nl;
+}
+
+function play(kind) {
+  const r = ROWS[i];
+  au.src = kind === "AB" ? r.ab : (kind === "A" ? r.a : r.b);
+  au.currentTime = 0;
+  au.play().catch(() => {});
+  for (const b of document.querySelectorAll(".play")) b.classList.remove("on");
+  $("p" + kind).classList.add("on");
+}
+
+function vote(v) {
+  votes[ROWS[i].pair] = v; save(); render();
+  setTimeout(() => { if (i < ROWS.length - 1) { i++; render(); } }, 150);
+}
+
+function render() {
+  const r = ROWS[i];
+  $("pair").textContent = r.pair;
+  $("clip").textContent = r.clip;
+  const n = ROWS.filter(x => votes[x.pair]).length;
+  $("fill").style.width = (100 * n / ROWS.length) + "%";
+  $("done").textContent = n + " / " + ROWS.length + " 記入済み";
+  $("pos").textContent = (i + 1) + " ペア目";
+  for (const b of document.querySelectorAll(".vote"))
+    b.dataset.on = votes[r.pair] === b.dataset.v ? "1" : "0";
+  $("prev").disabled = i === 0;
+  $("next").disabled = i === ROWS.length - 1;
+  const g = $("grid"); g.innerHTML = "";
+  ROWS.forEach((x, k) => {
+    const b = document.createElement("button");
+    b.textContent = x.pair.replace("pair", "") + (votes[x.pair] ? " ●" : "");
+    if (votes[x.pair]) b.className = "done";
+    if (k === i) b.className += " cur";
+    b.onclick = () => { i = k; render(); };
+    g.appendChild(b);
+  });
+  const sb = document.getElementById("pSRC");
+  if (sb) sb.disabled = !r.source;
+  $("csv").value = csv();
+}
+
+// 参照（target 本人の録音）と変換元。**どちらの系の出力でもない**ので、聴いても
+// A / B の正体は分かりません。「自然な歌声とはどう鳴るか」の基準として使います。
+(function context() {
+  const box = document.getElementById("ctx");
+  if (!REFS.length) return;
+  const row = document.createElement("div");
+  row.className = "row";
+  const cap = document.createElement("p");
+  cap.className = "sub";
+  cap.style.margin = "18px 0 0";
+  cap.innerHTML = "<b>参照</b>（どちらの系の出力でもありません）";
+  box.appendChild(cap);
+  for (const r of REFS) {
+    const b = document.createElement("button");
+    b.textContent = r.label;
+    b.onclick = () => { au.src = r.path; au.currentTime = 0; au.play().catch(() => {}); };
+    row.appendChild(b);
+  }
+  const src = document.createElement("button");
+  src.id = "pSRC";
+  src.textContent = "このペアの変換元 (4)";
+  src.onclick = () => playSource();
+  row.appendChild(src);
+  box.appendChild(row);
+})();
+
+function playSource() {
+  const r = ROWS[i];
+  if (!r.source) return;
+  au.src = r.source; au.currentTime = 0; au.play().catch(() => {});
+}
+
+$("pAB").onclick = () => play("AB");
+$("pA").onclick = () => play("A");
+$("pB").onclick = () => play("B");
+$("stop").onclick = () => au.pause();
+$("prev").onclick = () => { if (i > 0) { i--; render(); } };
+$("next").onclick = () => { if (i < ROWS.length - 1) { i++; render(); } };
+for (const b of document.querySelectorAll(".vote")) b.onclick = () => vote(b.dataset.v);
+$("dl").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv()], {type: "text/csv"}));
+  a.download = "sheet.csv"; a.click();
+};
+$("copy").onclick = () => {
+  const t = $("csv"); t.select(); t.setSelectionRange(0, 99999);
+  navigator.clipboard.writeText(csv()).catch(() => document.execCommand("copy"));
+  $("copy").textContent = "コピーしました";
+  setTimeout(() => { $("copy").textContent = "クリップボードへコピー"; }, 1200);
+};
+$("clear").onclick = () => {
+  if (confirm("投票を全部消します。よろしいですか？")) { votes = {}; save(); render(); }
+};
+addEventListener("keydown", e => {
+  if (e.target.tagName === "TEXTAREA") return;
+  const k = e.key.toLowerCase();
+  if (k === "1") play("AB"); else if (k === "2") play("A"); else if (k === "3") play("B");
+  else if (k === "4") playSource();
+  else if (k === "0") au.pause();
+  else if (k === "a") vote("A"); else if (k === "b") vote("B"); else if (k === "t") vote("tie");
+  else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
+  else if (e.key === "ArrowRight") { if (i < ROWS.length - 1) { i++; render(); } }
+  else return;
+  e.preventDefault();
+});
+render();
+</script></body></html>
+"""
+
+
+# anchor（catch trial）の合格線。これを下回ったら「判別できていない」と読む。
+ANCHOR_MIN_CORRECT_RATIO = 0.75
+
+
+def anchor_common_sr(rates: Sequence[int]) -> int:
+    """anchor の 2 側を揃える sample rate（低いほうに合わせる）。
+
+    anchor の素材は別コーパスから来ます（実測で波音リツ 44.1k / 棗 48k / 鬼灯 96k）。
+    **片側だけ触ると帯域の差が「どちらが target か」の手がかりになります。** 両側を同じ
+    rate へ落とせば非対称は入りません。低いほうに合わせるのは、上げても情報が増えない
+    ためです。
+
+    A / B の系ペアは**揃えずに例外**にします（そちらは測定の契約で、rate が違う 2 系を
+    比べるのは不公平だからです）。anchor は参照録音どうしなので提示の話です。
+    """
+    rs = [int(r) for r in rates]
+    if not rs:
+        raise ValueError("sample rate がありません")
+    return min(rs)
+
+
+def make_anchors(pairs: Sequence[dict], *, seed: int) -> list[dict]:
+    """**答えが分かっているペア**を作る（target 本人 対 無関係な話者）。
+
+    ①（target 類似の blind）で、判定 4 票すべてが「後に聴いた側」に張り付き、評価者は
+    「意味がないように思えます」と述べました。**anchor が無いと、「2 系が同一」と
+    「評価者が課題を遂行できていない」を区別できません。**
+
+    **左右は clip ごとに振ります。** 常に A が正解だと並びを覚えられます。
+    """
+    rng = random.Random(seed)
+    rows = []
+    for i, p in enumerate(pairs):
+        target_first = rng.random() < 0.5
+        rows.append({
+            "pair": f"anchor{i:02d}", "clip": "anchor",
+            "a": p["target"] if target_first else p["foil"],
+            "b": p["foil"] if target_first else p["target"],
+            # **これはページへ渡しません。** 正解が出たら catch trial の意味がありません。
+            "expected": "A" if target_first else "B",
+        })
+    return rows
+
+
+def score_anchors(rows: Sequence[dict]) -> dict[str, Any]:
+    """anchor の正解数。**2 種類の失敗を分けるための門。**
+
+    `task_performed` が False のとき、**本番の拮抗を「2 系が同一」と読んではいけません**。
+    未記入しか無ければ None（判断しない）です。
+    """
+    n_correct = n_wrong = n_tie = n_missing = 0
+    for r in rows:
+        if "expected" not in r:
+            raise ValueError(
+                f"{r.get('pair')}: expected がありません。**本番のペアを混ぜて採点すると"
+                "正解率が薄まり、門が効かなくなります**")
+        vote = str(r.get("vote") or "").strip()
+        if not vote:
+            n_missing += 1
+        elif vote.lower() == "tie":
+            # target 本人 対 無関係な話者。**引き分けは判別できていない印。**
+            n_tie += 1
+        elif vote == r["expected"]:
+            n_correct += 1
+        else:
+            n_wrong += 1
+    answered = n_correct + n_wrong + n_tie
+    return {
+        "n": len(rows), "n_correct": n_correct, "n_wrong": n_wrong,
+        "n_tie": n_tie, "n_missing": n_missing, "n_answered": answered,
+        "min_correct_ratio": ANCHOR_MIN_CORRECT_RATIO,
+        "task_performed": (None if answered == 0
+                           else n_correct / answered >= ANCHOR_MIN_CORRECT_RATIO),
+    }
+
+
+def clip_tag(name: str) -> str:
+    """変換結果のファイル名から clip の tag を取る。
+
+    LeapSVC は `<name>__<tag>_converted.wav`、正規化した baseline は `<tag>_converted.wav`
+    です。**どちらからも同じ tag が取れないと、2 系を対にできません。**
+    """
+    stem = str(name)
+    if stem.endswith("_converted.wav"):
+        stem = stem[: -len("_converted.wav")]
+    return stem.split("__")[-1]
+
+
+def find_clips(root: Path) -> dict[str, Path]:
+    """`*_converted.wav` を tag -> path で返す。
+
+    **source と上限は clip として数えません**（同じ tag で 3 本になり、対応が壊れます）。
+    """
+    return {clip_tag(p.name): p for p in sorted(Path(root).glob("*_converted.wav"))}
+
+
+def assign_sides(clips: Sequence[str], *, systems: tuple[str, str],
+                 seed: int) -> list[dict[str, str]]:
+    """clip ごとに A / B の割り当てと提示順を決める。
+
+    **clip の並びも混ぜます。** 曲順で聴くと後半に慣れが出るためです。
+    """
+    if len(systems) != 2 or systems[0] == systems[1]:
+        raise ValueError(f"systems は異なる 2 つにしてください（{systems} が来ました）")
+    rng = random.Random(seed)
+    order = list(clips)
+    rng.shuffle(order)
+    rows = []
+    for clip in order:
+        first, second = (systems if rng.random() < 0.5 else (systems[1], systems[0]))
+        rows.append({"clip": str(clip), "A": first, "B": second})
+    return rows
+
+
+def _p_sign_test(wins: int, n: int) -> float:
+    """符号検定の両側 p 値（帰無仮説: 五分五分）。"""
+    if n <= 0:
+        return 1.0
+    k = max(wins, n - wins)
+    tail = sum(comb(n, i) for i in range(k, n + 1)) / (2 ** n)
+    return min(1.0, 2.0 * tail)
+
+
+def tally(sheet: Sequence[dict[str, Any]], *,
+          question: str | None = None) -> dict[str, Any]:
+    """採点シートを system ごとの勝ち数へ直す。
+
+    **side ではなく system で数えます**（A が常に同じ system とは限らないため）。
+    **引き分けと未記入も数えます。**
+
+    `question` は**何を聞いたか**です。**既定は None（記録が無い）で、preference を
+    仮定しません** ―― result.json が 2 つ並んだときに取り違えるためです。
+    """
+    if question is not None and question not in QUESTIONS:
+        raise ValueError(f"知らない質問です（{question!r}）。{sorted(QUESTIONS)} のいずれか")
+    wins: dict[str, int] = {}
+    # **どちら側を選んだかも数えます。** 判別できないとき、人は「最後に聴いたほう」を
+    # 選びます（A -> B の並びでは B）。**これを見ないと位置の偏りを系の差と取り違えます。**
+    sides = {"A": 0, "B": 0}
+    ties = missing = 0
+    for row in sheet:
+        vote = str(row.get("vote", "")).strip()
+        if not vote:
+            missing += 1
+            continue
+        if vote.lower() == "tie":
+            ties += 1
+            continue
+        if vote not in ("A", "B"):
+            raise ValueError(
+                f"vote は A / B / tie / 空 のいずれかです（{vote!r} が来ました）。"
+                "system 名を直接書くと、どちら側で聴いたのかが失われます")
+        sides[vote] += 1
+        winner = str(row[vote])
+        wins[winner] = wins.get(winner, 0) + 1
+
+    decisive = sum(wins.values())
+    names = sorted({str(r[k]) for r in sheet for k in ("A", "B") if k in r})
+    for n in names:
+        wins.setdefault(n, 0)
+    top = max(wins.values()) if wins else 0
+    return {
+        "question": question,
+        "wins": wins, "sides": sides, "ties": ties, "n_missing": missing,
+        "n_voted": decisive + ties, "n_decisive": decisive,
+        "p_two_sided": _p_sign_test(top, decisive),
+        # **系の p と混ぜない。** 別の仮説（位置の偏り）なので別に出す。小さいほど
+        # 「系ではなく side を選んでいた」疑いが強い。
+        "p_side": _p_sign_test(max(sides.values()), decisive),
+        "note": ("符号検定は clip を独立とみなした参考値。評価者は 1 名なので、"
+                 "報告では N=1 と clip 数を必ず併記する。**p_side が小さいときは、"
+                 "系の勝敗を読む前に位置の偏りを疑う**"),
+    }
+
+
+def _cmd_prepare(a) -> int:
+    import json
+
+    a_dir, b_dir = Path(a.a), Path(a.b)
+    a_clips, b_clips = find_clips(a_dir), find_clips(b_dir)
+    shared = sorted(set(a_clips) & set(b_clips))
+    if not shared:
+        sys.exit(f"共通の clip がありません（{a.a}: {len(a_clips)} / {a.b}: {len(b_clips)}）")
+    print(f"[blind] 共通 clip {len(shared)} 本（{a.a_name} {len(a_clips)} / "
+          f"{a.b_name} {len(b_clips)}）")
+
+    rows = assign_sides(shared, systems=(a.a_name, a.b_name), seed=a.seed)
+    out = Path(a.out)
+    (out / "audio").mkdir(parents=True, exist_ok=True)
+    src = {a.a_name: a_clips, a.b_name: b_clips}
+    import soundfile as sf
+
+    key, sheet = [], [SHEET_HEADER]
+    for i, row in enumerate(rows):
+        pair = f"pair{i:02d}"
+        # **同じ loudness 揃えを両側へ当てる**（事前登録した条件）。コピーでは駄目。
+        wavs, srs = [], []
+        for side in ("A", "B"):
+            w, sr = sf.read(src[row[side]][row["clip"]], dtype="float32", always_2d=False)
+            if w.ndim > 1:
+                w = w.mean(axis=1)
+            wavs.append(w)
+            srs.append(sr)
+        if srs[0] != srs[1]:
+            sys.exit(f"{pair}: sample rate が違います（{srs}）。揃えてから比べること")
+        matched = match_loudness(*wavs)
+        for side, w in zip(("A", "B"), matched, strict=True):
+            sf.write(out / "audio" / f"{pair}_{side}.wav", w, srs[0])
+        # 続けて聴ける形（A -> 無音 -> B）。切り替えの手間を減らす。
+        (out / "paired").mkdir(parents=True, exist_ok=True)
+        sf.write(out / "paired" / f"{pair}_AB.wav", concat_pair(*matched, sr=srs[0]), srs[0])
+        key.append({"pair": pair, **row})
+        sheet.append(f"{pair},{row['clip']},")
+    # **anchor（catch trial）を混ぜる。** 答えが分かっているペアなので、外したら
+    # 「判別できていない」と読める。**正解は sheet にも key.json にも書かない。**
+    if a.anchor_target or a.anchor_foil:
+        if len(a.anchor_target) != len(a.anchor_foil):
+            sys.exit("--anchor-target と --anchor-foil は同数にしてください"
+                     f"（{len(a.anchor_target)} 対 {len(a.anchor_foil)}）")
+        anchors = make_anchors([{"target": x, "foil": y} for x, y
+                                in zip(a.anchor_target, a.anchor_foil, strict=True)],
+                               seed=a.seed)
+        for row in anchors:
+            wavs, srs = [], []
+            for side in ("a", "b"):
+                w, sr = sf.read(row[side], dtype="float32", always_2d=False)
+                if w.ndim > 1:
+                    w = w.mean(axis=1)
+                wavs.append(w)
+                srs.append(sr)
+            # **両側を同じ rate へ対称に落とす。** 片側だけ触ると帯域が手がかりになる。
+            sr_a = anchor_common_sr(srs)
+            if srs[0] != srs[1]:
+                import numpy as np
+
+                from preprocess.svc.extract import _resample
+
+                wavs = [_resample(np.ascontiguousarray(w, dtype=np.float32), s, sr_a)
+                        for w, s in zip(wavs, srs, strict=True)]
+                print(f"  {row['pair']}: anchor を {srs} -> {sr_a} Hz へ揃えました"
+                      "（片側だけ触ると帯域が手がかりになるため両側）")
+            matched = match_loudness(*wavs)
+            for side, w in zip(("A", "B"), matched, strict=True):
+                sf.write(out / "audio" / f"{row['pair']}_{side}.wav", w, sr_a)
+            sf.write(out / "paired" / f"{row['pair']}_AB.wav",
+                     concat_pair(*matched, sr=sr_a), sr_a)
+            sheet.append(f"{row['pair']},anchor,")
+        # **正解はここだけに置く。** ページにも key.json にも出さない。
+        (out / "anchors.json").write_text(
+            json.dumps([{k: r[k] for k in ("pair", "expected")} for r in anchors],
+                       ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"  -> {out}/anchors.json （anchor {len(anchors)} 本の正解。**採点まで見ない**）")
+
+    (out / "key.json").write_text(json.dumps(key, ensure_ascii=False, indent=1),
+                                 encoding="utf-8")
+    (out / "sheet.csv").write_text("\n".join(sheet) + "\n", encoding="utf-8")
+    print(f"  -> {out}/audio （**system 名は出ません**）")
+    print(f"  -> {out}/paired （A -> 無音 -> B を 1 本にしたもの。続けて聴ける）")
+    print(f"  -> {out}/sheet.csv （vote 列を埋める）")
+    print(f"  -> {out}/key.json （集計まで見ないこと）")
+    return 0
+
+
+def _cmd_tally(a) -> int:
+    import json
+
+    key = {r["pair"]: r for r in json.loads(Path(a.key).read_text(encoding="utf-8"))}
+    sheet = []
+    for row in read_sheet(a.sheet):
+        if row["pair"] not in key:
+            continue
+        k = key[row["pair"]]
+        sheet.append({"clip": k["clip"], "A": k["A"], "B": k["B"], "vote": row["vote"]})
+    if not sheet:
+        sys.exit("採点シートに有効な行がありません")
+
+    # **anchor は系の比較ではないので勝敗に入れない**（key.json に無いので上の
+    # ループで既に除かれている）。別に採点して、結果の読み方の門にする。
+    anchor_path = Path(a.sheet).parent / "anchors.json"
+    anchor_rep = None
+    if anchor_path.exists():
+        exp = {r["pair"]: r["expected"]
+               for r in json.loads(anchor_path.read_text(encoding="utf-8"))}
+        anchor_rep = score_anchors(
+            [{"pair": r["pair"], "expected": exp[r["pair"]], "vote": r["vote"]}
+             for r in read_sheet(a.sheet) if r["pair"] in exp])
+
+    rep = tally(sheet, question=getattr(a, "question", None))
+    if anchor_rep is not None:
+        rep["anchors"] = anchor_rep
+    rep["rows"] = sheet
+    # **何を聞いたかを見出しに出す。** preference と similarity の結果は別物なので、
+    # 出力を眺めただけで取り違えないようにする。
+    print(f"=== blind {rep['question'] or '質問の記録なし'}（N=1、非公式）===")
+    for name, w in sorted(rep["wins"].items(), key=lambda kv: -kv[1]):
+        print(f"  {name:10s} {w:3d} 勝")
+    print(f"  引き分け {rep['ties']} / 未記入 {rep['n_missing']} / 判定 {rep['n_decisive']}")
+    print(f"  符号検定 p = {rep['p_two_sided']:.4f}（参考値）")
+    s = rep["sides"]
+    print(f"  side: A {s['A']} / B {s['B']}  p = {rep['p_side']:.4f}")
+    if rep["n_decisive"] and rep["p_side"] <= rep["p_two_sided"]:
+        print("  ** 位置の偏りが系の差より強く出ています。系の勝敗を読む前に、"
+              "判別できていたのかを疑うこと **")
+    print(f"\n  ** {rep['note']} **")
+    if anchor_rep is not None:
+        print(f"\n  anchor（catch trial）: 正解 {anchor_rep['n_correct']} / "
+              f"不正解 {anchor_rep['n_wrong']} / 引き分け {anchor_rep['n_tie']} / "
+              f"未記入 {anchor_rep['n_missing']}")
+        if anchor_rep["task_performed"] is False:
+            print("  ** anchor を外しています。**本番の拮抗を「2 系が同一」と読まないこと** "
+                  "―― 判別できていない可能性があります **")
+        elif anchor_rep["task_performed"]:
+            print("  ** anchor は取れています。本番の拮抗は「2 系が近い」と読めます **")
+    if a.out:
+        Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+        Path(a.out).write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"\n-> {a.out}")
+    return 0
+
+
+# **選択肢に無い defect は、近いラベルに化けて記録されます。** 最初の版に「音量が
+# 小さい」が無かったため、評価者は「音量が揺れる」を選び、私はそれを揺れ（速い変動）
+# として測って空振りしました。実際に言いたかったのは「小さい・遠い」でした。
+DEFECT_LABELS = ("音量が小さい", "音が遠い", "細い・弱い", "こもる", "ざらつく",
+                 "子音が潰れる", "音程が揺れる", "音量が揺れる", "途切れる",
+                 "機械的", "息が不自然")
+# **列名に説明を入れません。** `vote  # vote に A / B / tie を書く` というヘッダで
+# `csv.DictReader` が列を引けず、26 票を丸ごと落としました（[read_sheet](#) 参照）。
+DEFECT_HEADER = "pair,clip,side,defects,note"
+
+
+def defect_page(rows: Sequence[dict], *, title: str = "defect naming",
+                references: Sequence[dict] = ()) -> str:
+    """**劣ったほうの「何が悪いか」を名付ける**ページを組み立てる。
+
+    blind preference は「どちらが良いか」しか残しません。**足りないのは defect の名前**
+    です。名付けに統計的な検出力は要らないので、少数のペアで足ります。
+
+    **聞くのは、その人が好まなかったほう**です（`vote` が A なら B について聞く）。
+    好んだほうの欠点を集めても、負けた理由は分かりません。**引き分けと未記入は
+    受け取りません** ―― どちらが劣るか決まらないためです。
+
+    **どちらがどの系かは、このページからは分かりません。** 対応は `key.json` にあり、
+    集計のときだけ突き合わせます。
+    """
+    import json
+
+    rows = list(rows)
+    if not rows:
+        raise ValueError("行がありません")
+    clean = []
+    for r in rows:
+        if "A" in r or "B" in r:
+            raise ValueError(f"key.json の行を渡しています（{r.get('pair')}）")
+        vote = str(r.get("vote") or "").strip()
+        if vote not in ("A", "B"):
+            raise ValueError(f"{r.get('pair')}: vote が {vote!r}。"
+                             "劣ったほうを聞くので、A か B が付いた行だけを渡すこと")
+        pair = str(r["pair"])
+        ask = "B" if vote == "A" else "A"
+        item = {"pair": pair, "clip": str(r["clip"]), "preferred": vote, "ask": ask,
+                "a": f"audio/{pair}_A.wav", "b": f"audio/{pair}_B.wav",
+                "ab": f"paired/{pair}_AB.wav",
+                "defects": str(r.get("defects") or ""), "note": str(r.get("note") or "")}
+        if r.get("source"):
+            item["source"] = _check_path(r["source"], f"{pair} の変換元")
+        clean.append(item)
+
+    refs = [{"label": str(x["label"]), "path": _check_path(x["path"], "参照")}
+            for x in references]
+    return (_DEFECT_TEMPLATE
+            .replace("__TITLE__", title)
+            .replace("__HEADER__", json.dumps(DEFECT_HEADER, ensure_ascii=False))
+            .replace("__LABELS__", json.dumps(list(DEFECT_LABELS), ensure_ascii=False))
+            .replace("__REFS__", json.dumps(refs, ensure_ascii=False, indent=1))
+            .replace("__ROWS__", json.dumps(clean, ensure_ascii=False, indent=1)))
+
+
+_DEFECT_TEMPLATE = r"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__TITLE__</title>
+<style>
+ :root{color-scheme:dark;--bg:#14161a;--fg:#e8eaed;--dim:#9aa0a6;--line:#2a2e35;
+       --acc:#7cc4ff;--ok:#7ddc8f;--warn:#d9b45b}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--fg);
+      font:15px/1.65 system-ui,"Segoe UI","Yu Gothic UI",sans-serif}
+ .wrap{max-width:780px;margin:0 auto;padding:24px 20px 64px}
+ h1{font-size:19px;margin:0 0 4px}
+ .sub{color:var(--dim);font-size:13px;margin:0 0 16px}
+ .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin:14px 0 6px}
+ .bar>i{display:block;height:100%;background:var(--acc);width:0;transition:width .2s}
+ .count{color:var(--dim);font-size:13px;display:flex;justify-content:space-between}
+ .card{border:1px solid var(--line);border-radius:12px;padding:20px;margin:18px 0;
+       background:#191c21}
+ .pair{font-size:22px;font-weight:600}
+ .clip{color:var(--dim);font-size:13px;margin-top:2px}
+ .ask{margin-top:12px;padding:10px 14px;border-left:3px solid var(--warn);
+      background:#1c1a15;border-radius:0 8px 8px 0;font-size:14px}
+ .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+ button{font:inherit;color:var(--fg);background:#232830;border:1px solid var(--line);
+        border-radius:9px;padding:10px 15px;cursor:pointer}
+ button:hover{border-color:var(--acc)}
+ button:disabled{opacity:.4;cursor:default}
+ .play.on{border-color:var(--acc);background:#1d2c3a}
+ .chip[data-on="1"]{background:#1e3326;border-color:var(--ok);color:var(--ok)}
+ textarea,input[type=text]{width:100%;background:#0f1114;color:var(--fg);
+   border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;margin-top:10px}
+ #csv{height:150px;font:12px/1.5 ui-monospace,Consolas,monospace}
+ .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px;
+       margin-top:10px}
+ .grid button{padding:7px 4px;font-size:12px}
+ .grid button.done{border-color:var(--ok);color:var(--ok)}
+ .grid button.cur{background:#1d2c3a;border-color:var(--acc)}
+ .keys{color:var(--dim);font-size:12px;margin-top:12px}
+ kbd{background:#232830;border:1px solid var(--line);border-radius:4px;padding:1px 6px;
+     font:12px ui-monospace,Consolas,monospace}
+</style></head><body><div class="wrap">
+<h1>劣ったほうの「何が悪いか」を名付ける</h1>
+<p class="sub">どちらが良いかは前回で決まっています。ここで取るのは <b>defect の名前</b>です。
+どちらがどの系かは表示されません。</p>
+
+<div id="ctx"></div>
+
+<div class="bar"><i id="fill"></i></div>
+<div class="count"><span id="done"></span><span id="pos"></span></div>
+
+<div class="card">
+ <div class="pair" id="pair"></div>
+ <div class="clip" id="clip"></div>
+ <div class="ask" id="askbox"></div>
+ <div class="row">
+  <button class="play" id="pAB">A → B を続けて <span style="color:var(--dim)">(1)</span></button>
+  <button class="play" id="pA">A だけ <span style="color:var(--dim)">(2)</span></button>
+  <button class="play" id="pB">B だけ <span style="color:var(--dim)">(3)</span></button>
+  <button id="stop">停止 <span style="color:var(--dim)">(0)</span></button>
+ </div>
+ <div class="row" id="chips"></div>
+ <input type="text" id="note" placeholder="ほかに気づいたことがあれば一言（任意）">
+ <p class="keys">当てはまるものを選びます。<b>複数選んで構いません。</b>
+  無ければ一言だけ書いてください。<kbd>←</kbd><kbd>→</kbd> で移動。</p>
+ <div class="row">
+  <button id="prev">← 前へ</button><button id="next">次へ →</button>
+ </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<h2 style="font-size:16px;margin:28px 0 6px">書き出し</h2>
+<p class="sub" style="margin:0 0 10px">この内容を <code>out/m5/blind/defects.csv</code> として保存します。</p>
+<div class="row" style="margin-top:0">
+ <button id="dl">defects.csv をダウンロード</button>
+ <button id="copy">クリップボードへコピー</button>
+</div>
+<textarea id="csv" readonly></textarea>
+
+<audio id="au"></audio>
+</div><script>
+const ROWS = __ROWS__;
+const REFS = __REFS__;
+const LABELS = __LABELS__;
+const HEADER = __HEADER__;
+const KEY = "leapsinger-defects";
+const au = document.getElementById("au");
+const $ = id => document.getElementById(id);
+let i = 0, state = {};
+try { state = JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { state = {}; }
+for (const r of ROWS) {
+  if (!state[r.pair] && (r.defects || r.note))
+    state[r.pair] = {defects: r.defects ? r.defects.split("|") : [], note: r.note};
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+function cur() { return state[ROWS[i].pair] || (state[ROWS[i].pair] = {defects: [], note: ""}); }
+function filled(p) { const s = state[p]; return s && (s.defects.length || (s.note || "").trim()); }
+
+function csv() {
+  const nl = String.fromCharCode(10);
+  const q = s => (/[",]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s);
+  const lines = [HEADER];
+  for (const r of ROWS) {
+    const s = state[r.pair] || {defects: [], note: ""};
+    lines.push([r.pair, r.clip, r.ask, q(s.defects.join("|")), q(s.note || "")].join(","));
+  }
+  return lines.join(nl) + nl;
+}
+
+function play(kind) {
+  const r = ROWS[i];
+  au.src = kind === "AB" ? r.ab : (kind === "A" ? r.a : r.b);
+  au.currentTime = 0; au.play().catch(() => {});
+  for (const b of document.querySelectorAll(".play")) b.classList.remove("on");
+  $("p" + kind).classList.add("on");
+}
+
+(function context() {
+  if (!REFS.length) return;
+  const box = $("ctx"), row = document.createElement("div");
+  row.className = "row"; row.style.marginTop = "0";
+  const cap = document.createElement("p");
+  cap.className = "sub"; cap.style.margin = "0";
+  cap.innerHTML = "<b>参照</b>（どちらの系の出力でもありません）";
+  box.appendChild(cap);
+  for (const r of REFS) {
+    const b = document.createElement("button");
+    b.textContent = r.label;
+    b.onclick = () => { au.src = r.path; au.currentTime = 0; au.play().catch(() => {}); };
+    row.appendChild(b);
+  }
+  const s = document.createElement("button");
+  s.id = "pSRC"; s.textContent = "このペアの変換元 (4)";
+  s.onclick = () => { const r = ROWS[i]; if (!r.source) return;
+                      au.src = r.source; au.currentTime = 0; au.play().catch(() => {}); };
+  row.appendChild(s);
+  box.appendChild(row);
+})();
+
+function render() {
+  const r = ROWS[i], s = cur();
+  $("pair").textContent = r.pair;
+  $("clip").textContent = r.clip;
+  $("askbox").innerHTML = "前回あなたが選んだのは <b>" + r.preferred +
+    "</b> でした。<b>" + r.ask + " の何が気になりましたか。</b>";
+  const n = ROWS.filter(x => filled(x.pair)).length;
+  $("fill").style.width = (100 * n / ROWS.length) + "%";
+  $("done").textContent = n + " / " + ROWS.length + " 記入済み";
+  $("pos").textContent = (i + 1) + " ペア目";
+  const box = $("chips"); box.innerHTML = "";
+  for (const label of LABELS) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = label;
+    b.dataset.on = s.defects.includes(label) ? "1" : "0";
+    b.onclick = () => {
+      const k = s.defects.indexOf(label);
+      if (k < 0) s.defects.push(label); else s.defects.splice(k, 1);
+      save(); render();
+    };
+    box.appendChild(b);
+  }
+  $("note").value = s.note || "";
+  $("prev").disabled = i === 0;
+  $("next").disabled = i === ROWS.length - 1;
+  const sb = $("pSRC"); if (sb) sb.disabled = !r.source;
+  const g = $("grid"); g.innerHTML = "";
+  ROWS.forEach((x, k) => {
+    const b = document.createElement("button");
+    b.textContent = x.pair.replace("pair", "") + (filled(x.pair) ? " ●" : "");
+    if (filled(x.pair)) b.className = "done";
+    if (k === i) b.className += " cur";
+    b.onclick = () => { i = k; render(); };
+    g.appendChild(b);
+  });
+  $("csv").value = csv();
+}
+
+$("note").oninput = () => { cur().note = $("note").value; save(); $("csv").value = csv(); };
+$("pAB").onclick = () => play("AB");
+$("pA").onclick = () => play("A");
+$("pB").onclick = () => play("B");
+$("stop").onclick = () => au.pause();
+$("prev").onclick = () => { if (i > 0) { i--; render(); } };
+$("next").onclick = () => { if (i < ROWS.length - 1) { i++; render(); } };
+$("dl").onclick = () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv()], {type: "text/csv"}));
+  a.download = "defects.csv"; a.click();
+};
+$("copy").onclick = () => {
+  navigator.clipboard.writeText(csv()).catch(() => {});
+  $("copy").textContent = "コピーしました";
+  setTimeout(() => { $("copy").textContent = "クリップボードへコピー"; }, 1200);
+};
+addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+  const k = e.key.toLowerCase();
+  if (k === "1") play("AB"); else if (k === "2") play("A"); else if (k === "3") play("B");
+  else if (k === "0") au.pause();
+  else if (e.key === "ArrowLeft") { if (i > 0) { i--; render(); } }
+  else if (e.key === "ArrowRight") { if (i < ROWS.length - 1) { i++; render(); } }
+  else return;
+  e.preventDefault();
+});
+render();
+</script></body></html>
+"""
+
+
+def _cmd_page(a) -> int:
+    rows = read_sheet(a.sheet)
+    out = Path(a.out) if a.out else Path(a.sheet).parent / "listen.html"
+    root = out.parent
+
+    # 参照と変換元は **中立な名前で context/ へ複写**する。元の場所を直接指すと
+    # パスに system 名が出て blind が崩れる（_check_path が拒否する）。
+    refs = []
+    if a.target_ref or a.source_dir:
+        import soundfile as sf
+
+        ctx = root / "context"
+        ctx.mkdir(parents=True, exist_ok=True)
+
+        def _copy(src_path, dst_name, level_of):
+            """`level_of` の音量へ合わせて複写する（浮くと聴きにくいだけなので揃える）。"""
+            w, sr = sf.read(str(src_path), dtype="float32", always_2d=False)
+            if w.ndim > 1:
+                w = w.mean(axis=1)
+            ref, _ = sf.read(str(level_of), dtype="float32", always_2d=False)
+            if ref.ndim > 1:
+                ref = ref.mean(axis=1)
+            sf.write(ctx / dst_name, match_loudness(w, ref)[0], sr)
+            return f"context/{dst_name}"
+
+        if a.target_ref:
+            level = root / "audio" / f"{rows[0]['pair']}_A.wav"
+            refs.append({"label": a.target_label,
+                         "path": _copy(a.target_ref, "target_ref.wav", level)})
+        if a.source_dir:
+            found = 0
+            for r in rows:
+                src = find_source(a.source_dir, r["clip"])
+                if src is None:
+                    continue
+                level = root / "audio" / f"{r['pair']}_A.wav"
+                r["source"] = _copy(src, f"{r['pair']}_source.wav", level)
+                found += 1
+            print(f"[blind] 変換元 {found} / {len(rows)} 本を context/ へ")
+
+    if QUESTIONS[a.question]["needs_target_ref"] and not refs:
+        sys.exit(f"--question {a.question} には --target-ref が要ります。"
+                 "「似ているか」は基準が無ければ判断できません")
+    out.write_text(listen_page(rows, references=refs, question=a.question,
+                               sheet_path=str(a.sheet).replace(chr(92), "/")),
+                   encoding="utf-8")
+    print(f"[blind] {len(rows)} ペア -> {out} （質問: {a.question}）")
+    print("  ブラウザで開いて投票し、書き出した sheet.csv で上書きしてから tally を回します")
+    return 0
+
+
+def _cmd_page_defects(a) -> int:
+    rows = [r for r in read_sheet(a.sheet) if r["vote"] in ("A", "B")]
+    if a.clips:
+        want = set(a.clips)
+        rows = [r for r in rows if r["clip"] in want]
+        missing = want - {r["clip"] for r in rows}
+        if missing:
+            sys.exit(f"票のある行に見つかりません: {sorted(missing)}")
+    if not rows:
+        sys.exit("A / B の票がある行がありません（tie と未記入は聞けません）")
+
+    out = Path(a.out) if a.out else Path(a.sheet).parent / "defects.html"
+    root, refs = out.parent, []
+    ctx = root / "context"
+    if (ctx / "target_ref.wav").exists():
+        refs.append({"label": a.target_label, "path": "context/target_ref.wav"})
+    for r in rows:
+        p = ctx / f"{r['pair']}_source.wav"
+        if p.exists():
+            r["source"] = f"context/{p.name}"
+    out.write_text(defect_page(rows, references=refs), encoding="utf-8")
+    print(f"[defects] {len(rows)} ペア -> {out}")
+    for r in rows:
+        print(f"  {r['pair']}  {r['clip']:10s} 前回 {r['vote']} -> "
+              f"{'B' if r['vote'] == 'A' else 'A'} について聞く")
+    return 0
+
+
+def main() -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p1 = sub.add_parser("prepare", help="聴く用のファイルと採点シートを作る")
+    p1.add_argument("--a", required=True, help="片方の変換結果ディレクトリ")
+    p1.add_argument("--b", required=True, help="もう片方")
+    p1.add_argument("--a-name", default="A系")
+    p1.add_argument("--b-name", default="B系")
+    p1.add_argument("--out", required=True)
+    p1.add_argument("--seed", type=int, default=0)
+    p1.add_argument("--anchor-target", nargs="*", default=[],
+                    help="**catch trial の正解側**（target 話者本人の録音）。"
+                         "**無いと「2 系が同一」と「判別できていない」を区別できません**")
+    p1.add_argument("--anchor-foil", nargs="*", default=[],
+                    help="catch trial の不正解側（無関係な話者）。--anchor-target と同数")
+    p1.set_defaults(func=_cmd_prepare)
+
+    p2 = sub.add_parser("tally", help="採点シートを集計する")
+    p2.add_argument("--sheet", required=True)
+    p2.add_argument("--key", required=True)
+    p2.add_argument("--out", default=None)
+    p2.add_argument("--question", default=None, choices=sorted(QUESTIONS),
+                    help="**何を聞いたか。** 省くと result.json に記録が残りません")
+    p2.set_defaults(func=_cmd_tally)
+
+    p3 = sub.add_parser("page", help="ブラウザで聴いて投票するページを作る")
+    p3.add_argument("--sheet", required=True)
+    p3.add_argument("--out", default=None, help="既定は sheet.csv と同じ場所の listen.html")
+    p3.add_argument("--target-ref", default=None,
+                    help="target 話者本人の録音。**上限（*_vocoder_only.wav）は渡さないこと**")
+    p3.add_argument("--target-label", default="target 本人の録音")
+    p3.add_argument("--source-dir", default=None,
+                    help="`<曲>__<clip>_source.wav` が並ぶディレクトリ（変換元。両系で同一）")
+    p3.add_argument("--question", default="preference", choices=sorted(QUESTIONS),
+                    help="**質問が違えば別の test です。** 票の保存先も分かれます")
+    p3.set_defaults(func=_cmd_page)
+
+    p4 = sub.add_parser("page-defects", help="劣ったほうの欠点を名付けるページを作る")
+    p4.add_argument("--sheet", required=True, help="投票済みの sheet.csv")
+    p4.add_argument("--clips", nargs="*", default=None, help="この clip だけに絞る")
+    p4.add_argument("--out", default=None)
+    p4.add_argument("--target-label", default="target 本人の録音")
+    p4.set_defaults(func=_cmd_page_defects)
+
+    a = ap.parse_args()
+    return a.func(a)
+
+
+if __name__ == "__main__":
+    ROOT = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(ROOT))
+    raise SystemExit(main())

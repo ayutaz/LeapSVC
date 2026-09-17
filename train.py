@@ -5,7 +5,7 @@ a lightweight mel-spectrogram discriminator (GAN) is switched on partway through
 texture. The schedule — when the GAN turns on, its strength, and so on — is set in the config's
 `gan:` section; with `gan.enabled: false` it is plain flow + reconstruction training.
 
-    python -m train --config configs/3speaker_gan2d.yaml \
+    uv run python -m train --config configs/3speaker_gan2d.yaml \
         --data_dirs data/oniku data/natsume data/ritsu \
         --run_name 3speaker_gan2d --out_root log --device cuda
 
@@ -20,25 +20,33 @@ import os
 import time
 from pathlib import Path
 
+import matplotlib
 import numpy as np
 import torch
 import torch.nn as nn
 import yaml
-from tqdm import tqdm
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
+from dataset import FrameBasedBatchSampler, LeapSingerDataset, acoustic_collate_fn
+from infer import infer_mel, infer_svc_mel, load_vocoder, mel_to_wav
 from leapsinger.config import MelSpec
-from dataset import (LeapSingerDataset, acoustic_collate_fn, FrameBasedBatchSampler)
-from infer import infer_mel, load_vocoder, mel_to_wav
-from leapsinger.modules.discriminators import (
-    JCUMelDiscriminator, Mel2DDiscriminator, d_loss_jcu, g_adv_fm_jcu, laplacian_var_ratio)
-from preprocess.vocab import Vocab, PAU_ID
-from preprocess.phrase_cut import clip_pau_gain
-from leapsinger.models.acoustic import HarmonicAcousticModel, HarmonicAcousticModelMultiSpk
 from leapsinger.mel import pitch_warp_mel_torch
+from leapsinger.models.acoustic import HarmonicAcousticModel, HarmonicAcousticModelMultiSpk
+from leapsinger.models.svc import HarmonicSVCModel
+from leapsinger.modules.discriminators import (
+    JCUMelDiscriminator,
+    Mel2DDiscriminator,
+    d_loss_jcu,
+    g_adv_fm_jcu,
+    laplacian_var_ratio,
+)
 from leapsinger.modules.harmonic_excitation import harmonic_wave
-import matplotlib
+from preprocess.phrase_cut import clip_pau_gain
+from preprocess.vocab import PAU_ID, Vocab
+from svc_dataset import SVCFeatureDataset, svc_collate_fn
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -61,7 +69,7 @@ def _mel_fig(mel, title, vmin=-11.5, vmax=2.0):
 def build_model(cfg: dict, n_phonemes: int):
     m, e, mel = cfg["model"], cfg["excitation"], cfg["mel"]
     common = dict(
-        n_phonemes=n_phonemes, hidden=m.get("hidden", 256), mel_bins=mel["n_mels"],
+        hidden=m.get("hidden", 256), mel_bins=mel["n_mels"],
         mel_vmin=m.get("mel_vmin", -11.5), mel_vmax=m.get("mel_vmax", 2.0),
         backbone_ch=m.get("backbone_ch", 256), n_cycles=m.get("n_cycles", 3),
         dilation_schedule=m.get("dilation_schedule", "pow2_15"),
@@ -74,12 +82,23 @@ def build_model(cfg: dict, n_phonemes: int):
         harm_decay=e.get("harm_decay", 1.0), exc_hop=mel["hop"],
     )
     spk_dim = int(m.get("spk_dim", 0))
-    if spk_dim > 0:
+    if m.get("arch") == "svc":
+        model = HarmonicSVCModel(
+            **common, **harm, content_dim=int(m["content_dim"]),
+            content_layers=int(m.get("content_layers", 2)),
+            content_dropout=float(m.get("content_dropout", 0.1)),
+            n_speakers=int(m.get("n_speakers", 0)), spk_dim=spk_dim,
+        )
+        arch = "harmonic_svc"
+    elif spk_dim > 0:
         model = HarmonicAcousticModelMultiSpk(
-            **common, **harm, n_speakers=int(m["n_speakers"]), spk_dim=spk_dim)
+            **common, **harm, n_phonemes=n_phonemes,
+            n_speakers=int(m["n_speakers"]), spk_dim=spk_dim)
         arch = "harmonic_multispk"
     else:
-        model = HarmonicAcousticModel(**common, **harm, n_speakers=int(m.get("n_speakers", 0)))
+        model = HarmonicAcousticModel(
+            **common, **harm, n_phonemes=n_phonemes,
+            n_speakers=int(m.get("n_speakers", 0)))
         arch = "harmonic"
     return model, arch
 
@@ -101,7 +120,7 @@ def resolve_vocab(phonemes_path, data_dirs):
 
 def ckpt_config(cfg: dict, arch: str, n_phonemes: int, phonemes: list | None = None) -> dict:
     m, e, mel, tr = cfg["model"], cfg["excitation"], cfg["mel"], cfg["train"]
-    return {
+    out = {
         "arch": arch, "n_phonemes": n_phonemes, "phonemes": phonemes,
         "hidden": m.get("hidden", 256), "mel_bins": mel["n_mels"],
         "mel_vmin": m.get("mel_vmin", -11.5), "mel_vmax": m.get("mel_vmax", 2.0),
@@ -115,14 +134,27 @@ def ckpt_config(cfg: dict, arch: str, n_phonemes: int, phonemes: list | None = N
         "exc_hop": mel["hop"], "hop": mel["hop"], "sample_rate": mel["sr"],
         "recon_weight": tr.get("recon_weight", 1.0), "infer_steps": tr.get("num_steps", 10),
     }
+    if arch == "harmonic_svc":
+        out.update(
+            content_dim=int(m["content_dim"]),
+            content_layers=int(m.get("content_layers", 2)),
+            content_dropout=float(m.get("content_dropout", 0.1)),
+        )
+    return out
 
 
 def _forward(model, b, device, recon_weight):
     b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in b.items()}
-    out = model(
-        b["ph_ids"], b["ph_durs"], b["f0_logf0"], b["uv"], b["target_mel"],
-        padding_mask=b["ph_mask"], spk_id=b["spk_id"], style_id=b["style_id"],
-        frame_mask=b["frame_mask"], harm_wave=b.get("harm_wave"))
+    if isinstance(model, HarmonicSVCModel):
+        out = model(
+            b["content"], b["f0_logf0"], b["uv"], b["loudness"], b["target_mel"],
+            content_mask=b["content_mask"], spk_id=b["spk_id"], style_id=b["style_id"],
+            frame_mask=b["frame_mask"], harm_wave=b.get("harm_wave"))
+    else:
+        out = model(
+            b["ph_ids"], b["ph_durs"], b["f0_logf0"], b["uv"], b["target_mel"],
+            padding_mask=b["ph_mask"], spk_id=b["spk_id"], style_id=b["style_id"],
+            frame_mask=b["frame_mask"], harm_wave=b.get("harm_wave"))
     loss = out["flow"]
     if recon_weight > 0 and "recon" in out:
         loss = loss + recon_weight * out["recon"]
@@ -134,10 +166,16 @@ def _forward_flow_gan(model, b, flow_loss_type: str):
     数式は mel_dilated_rectified_flow.compute_loss と同一（同じ mask / t 分布）。
     ★x0 は励起（randn ではない）。RNG 順（_encode dropout → 励起 randn → t rand）も compute_loss と一致。"""
     flow = model.flow
-    cond = model._encode(
-        b["ph_ids"], b["ph_durs"], b["f0_logf0"], b["uv"], b["ph_mask"],
-        max_frames=b["target_mel"].shape[2], spk_id=b["spk_id"],
-        style_id=(b["style_id"] if getattr(model, "style_emb", None) is not None else None))
+    if isinstance(model, HarmonicSVCModel):
+        cond = model._encode(
+            b["content"], b["f0_logf0"], b["uv"], b["loudness"], b["content_mask"],
+            max_frames=b["target_mel"].shape[2], spk_id=b["spk_id"],
+            style_id=(b["style_id"] if getattr(model, "style_emb", None) is not None else None))
+    else:
+        cond = model._encode(
+            b["ph_ids"], b["ph_durs"], b["f0_logf0"], b["uv"], b["ph_mask"],
+            max_frames=b["target_mel"].shape[2], spk_id=b["spk_id"],
+            style_id=(b["style_id"] if getattr(model, "style_emb", None) is not None else None))
     x1 = flow._norm(b["target_mel"])
     x0 = model._excitation_x0(b["f0_logf0"], b["uv"], harm_wave=b.get("harm_wave"))   # ★励起
     t = torch.rand(x1.shape[0], device=x1.device)
@@ -234,6 +272,43 @@ def _rand_window(tensors, win: int):
     return [x[..., s:s + win] for x in tensors]
 
 
+def perf_snapshot(*, step: int, seconds: float, examples: int, frames: int,
+                  peak_vram_bytes: int | None = None) -> dict:
+    """学習の実測スループット（実行計画 M3 ゴール 4）。
+
+    tqdm の step/s は画面に出るだけで記録に残りません。vast.ai は時間課金なので、
+    この数字はそのまま所要時間と料金の見積もりになります。
+    """
+    dt = max(float(seconds), 1e-9)
+    out = {"step": int(step), "elapsed_sec": round(float(seconds), 2),
+           "steps_per_sec": step / dt, "examples_per_sec": examples / dt,
+           "frames_per_sec": frames / dt}
+    if peak_vram_bytes:
+        out["peak_vram_gb"] = float(peak_vram_bytes) / 1024 ** 3
+    return out
+
+
+def perf_line(s: dict) -> str:
+    line = (f"[perf] step {s['step']}  {s['steps_per_sec']:.2f} step/s  "
+            f"{s['examples_per_sec']:.1f} ex/s  {s['frames_per_sec']:.0f} frames/s")
+    if "peak_vram_gb" in s:
+        line += f"  peak {s['peak_vram_gb']:.2f} GB"
+    return line
+
+
+def _loader_kwargs(device, num_workers: int) -> dict:
+    """DataLoader の追加引数。**pin_memory は CUDA のときだけ有効にする。**
+
+    CPU 実行や GPU が使えない環境で `pin_memory=True` にすると、バッチを取り出す瞬間に
+    `CUDA error: CUDA-capable device(s) is/are busy or unavailable` で落ちる（実測）。
+    `--device cpu` は GPU の無い環境と疎通確認のための経路なので、ここは device で決める。
+    """
+    kw = {"pin_memory": torch.device(device).type == "cuda"}
+    if num_workers > 0:
+        kw.update(persistent_workers=True, prefetch_factor=4)
+    return kw
+
+
 def main():
     ap = argparse.ArgumentParser(description="Train the LeapSinger acoustic model with a light GAN.")
     ap.add_argument("--config", required=True)
@@ -272,25 +347,47 @@ def main():
             spk_map.setdefault(dbname, int(rr.get("spk_id", 0)))
             style_map.setdefault(dbname, int(rr.get("style_id", 0)))
     print(f"[spk_map] {spk_map}\n[style_map] {style_map}")
-    train_ds = LeapSingerDataset(args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
-                                min_sec=dcfg.get("min_sec", 0.3), pitch_aug=tr.get("pitch_aug", False),
-                                silence=dcfg.get("silence", True),
-                                silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),
-                                spk_map=spk_map, style_map=style_map)
+    is_svc = cfg["model"].get("arch") == "svc"
+    if is_svc and tr.get("pitch_aug", False):
+        raise SystemExit("SVC feature training does not support online pitch_aug; augment before extraction")
+    if is_svc:
+        train_ds = SVCFeatureDataset(
+            args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
+            min_sec=dcfg.get("min_sec", 0.3), spk_map=spk_map, style_map=style_map)
+    else:
+        train_ds = LeapSingerDataset(
+            args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
+            min_sec=dcfg.get("min_sec", 0.3), pitch_aug=tr.get("pitch_aug", False),
+            silence=dcfg.get("silence", True),
+            silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),
+            spk_map=spk_map, style_map=style_map)
     if "n_speakers" not in cfg["model"]:
         cfg["model"]["n_speakers"] = (max(spk_map.values()) + 1) if spk_map else 1
 
-    vocab = resolve_vocab(args.phonemes, args.data_dirs)
-    print(f"[vocab] {vocab.n_phonemes} phonemes")
-    model, arch = build_model(cfg, vocab.n_phonemes)
+    if is_svc:
+        configured_dim = int(cfg["model"].get("content_dim", train_ds.content_dim))
+        if configured_dim != train_ds.content_dim:
+            raise SystemExit(
+                f"model.content_dim={configured_dim} but dataset content_dim={train_ds.content_dim}"
+            )
+        cfg["model"]["content_dim"] = configured_dim
+        vocab = None
+        n_phonemes = 0
+    else:
+        vocab = resolve_vocab(args.phonemes, args.data_dirs)
+        n_phonemes = vocab.n_phonemes
+        print(f"[vocab] {vocab.n_phonemes} phonemes")
+    model, arch = build_model(cfg, n_phonemes)
     model = model.to(device)
     print(f"model {arch}  {sum(p.numel() for p in model.parameters())/1e6:.2f}M params  "
           f"n_speakers={cfg['model']['n_speakers']}")
 
     # pitch_aug でも harm キャッシュを warm する。未拡張 item はキャッシュ流用、拡張 item のみ
     # maybe_pitch_augment がシフト後 f0 で再生成して上書き(部分キャッシュ=高速化)。
-    train_ds.warm_harm_cache(n_harm=model.n_harm, harm_decay=model.harm_decay,
-                             exc_hop=model.exc_hop, use_uv=model.use_uv, device=device)
+    # SVC の dataset は warm_harm_cache を持たないので hasattr で守る。
+    if hasattr(train_ds, "warm_harm_cache"):
+        train_ds.warm_harm_cache(n_harm=model.n_harm, harm_decay=model.harm_decay,
+                                 exc_hop=model.exc_hop, use_uv=model.use_uv, device=device)
 
     _balance_by = tr.get("balance_by") or ("speaker" if tr.get("balance_speakers", False) else None)
     _weights = None
@@ -304,11 +401,9 @@ def main():
     sampler = FrameBasedBatchSampler(train_ds.frame_counts, tr.get("max_batch_frames", 60000),
                                      tr.get("max_batch_size", 16), shuffle=True, weights=_weights)
     _nw = tr.get("num_workers", 2)
-    _dl_kw = dict(pin_memory=True)
-    if _nw > 0:
-        _dl_kw.update(persistent_workers=True, prefetch_factor=4)
-    loader = DataLoader(train_ds, batch_sampler=sampler, collate_fn=acoustic_collate_fn,
-                        num_workers=_nw, **_dl_kw)
+    collate_fn = svc_collate_fn if is_svc else acoustic_collate_fn
+    loader = DataLoader(train_ds, batch_sampler=sampler, collate_fn=collate_fn,
+                        num_workers=_nw, **_loader_kwargs(device, _nw))
 
     opt_name = tr.get("optimizer", "radam")
     Opt = torch.optim.RAdam if opt_name == "radam" else torch.optim.AdamW
@@ -335,7 +430,8 @@ def main():
 
     out_dir = Path(args.out_root) / args.run_name
     out_dir.mkdir(parents=True, exist_ok=True)
-    cfg_out = ckpt_config(cfg, arch, vocab.n_phonemes, vocab.phonemes)
+    cfg_out = ckpt_config(
+        cfg, arch, n_phonemes, (None if vocab is None else vocab.phonemes))
     recon_weight = tr.get("recon_weight", 1.0)
     max_updates = tr.get("max_updates", 60000)
     save_interval = tr.get("save_interval", 5000)
@@ -354,11 +450,17 @@ def main():
 
     # ── TensorBoard eval──────────────────────────────
     writer = SummaryWriter(str(out_dir))
-    eval_ds = LeapSingerDataset(args.data_dirs, "eval", eval_songs=dcfg.get("eval_songs", 2),
-                                min_sec=dcfg.get("min_sec", 0.3),
-                                silence=dcfg.get("silence", True),
-                                silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),
-                                spk_map=spk_map, style_map=style_map)
+    if is_svc:
+        eval_ds = SVCFeatureDataset(
+            args.data_dirs, "eval", eval_songs=dcfg.get("eval_songs", 2),
+            min_sec=dcfg.get("min_sec", 0.3), spk_map=spk_map, style_map=style_map)
+    else:
+        eval_ds = LeapSingerDataset(
+            args.data_dirs, "eval", eval_songs=dcfg.get("eval_songs", 2),
+            min_sec=dcfg.get("min_sec", 0.3),
+            silence=dcfg.get("silence", True),
+            silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),
+            spk_map=spk_map, style_map=style_map)
     _picks: dict = {}
     for _idx, (_sh, _nm, _db) in enumerate(eval_ds.files):
         _s = int(spk_map.get(os.path.basename(os.path.normpath(_db)), 0))
@@ -378,10 +480,12 @@ def main():
     mvmax = float(cfg["model"].get("mel_vmax", 2.0))
 
     def log_eval(step):
+        if not eval_samples:                          # 1曲だけの DB は hold-out が作れない
+            return                                    # （n_hold=min(eval_songs, 曲数-1)）→ eval を飛ばす
         model.eval()
         with torch.no_grad():
             torch.manual_seed(1234)
-            eb = acoustic_collate_fn([it for _, _, it in eval_samples])
+            eb = collate_fn([it for _, _, it in eval_samples])
             eloss, eout = _forward(model, eb, device, recon_weight)
             writer.add_scalar("eval/loss", eloss.item(), step)
             writer.add_scalar("eval/flow", eout["flow"].item(), step)
@@ -389,7 +493,8 @@ def main():
             _vsum = 0.0
             for s, k, it in eval_samples:
                 tag = f"spk{s}/s{k}"
-                pred = infer_mel(model, it, num_steps=tr.get("num_steps", 10), device=str(device))
+                pred = ((infer_svc_mel if is_svc else infer_mel)(
+                    model, it, num_steps=tr.get("num_steps", 10), device=str(device)))
                 writer.add_figure(f"{tag}_pred_mel",
                                   _mel_fig(pred, f"{tag} pred @ {step}", mvmin, mvmax), step)
                 _vsum += laplacian_var_ratio(torch.as_tensor(pred)[None],
@@ -451,11 +556,22 @@ def main():
     model.train()
     pbar = tqdm(total=max_updates, initial=step, desc=args.run_name, unit="step", dynamic_ncols=True)
     _done = False
+    # 実測スループット（実行計画 M3 ゴール 4）。checkpoint から再開したときは step を
+    # 数え直すので、`_perf_at` は「この起動での経過 step」で判定する。
+    _perf_t0, _perf_step0, _perf_ex, _perf_fr = time.time(), step, 0, 0
+    _perf_at = [100, 1000, 10000]
+    if torch.cuda.is_available() and device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats()
     while step < max_updates:
         for b in loader:
             b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in b.items()}
-            b = maybe_pitch_augment(b, tr, cfg["mel"], model,
-                                    silence=train_ds.silence, fade_frames=train_ds.silence_fade_frames)
+            # SVC の dataset は silence / silence_fade_frames を持たないので SVS だけに当てる。
+            if not is_svc:
+                b = maybe_pitch_augment(b, tr, cfg["mel"], model,
+                                        silence=train_ds.silence,
+                                        fade_frames=train_ds.silence_fade_frames)
+            _perf_ex += int(b["target_mel"].shape[0])
+            _perf_fr += int(b["target_mel"].shape[0] * b["target_mel"].shape[2])
             losses = _forward_flow_gan(model, b, tr.get("flow_loss", cfg["model"].get("flow_loss", "l2")))
             g_total = losses["flow"]
             d_loss = None; d_logits = {}; g_adv = g_fm = None; fm_w = 0.0; w_ad = 1.0
@@ -516,6 +632,18 @@ def main():
                     writer.add_scalar("train/fm", g_fm.item(), step)
                     writer.add_scalar("train/fm_w", fm_w, step)
                     writer.add_scalar("train/adaptive_w", float(w_ad), step)
+            if (step - _perf_step0) in _perf_at:
+                _snap = perf_snapshot(
+                    step=step - _perf_step0, seconds=time.time() - _perf_t0,
+                    examples=_perf_ex, frames=_perf_fr,
+                    peak_vram_bytes=(torch.cuda.max_memory_allocated()
+                                     if device.type == "cuda" else None))
+                tqdm.write(perf_line(_snap))
+                for k in ("steps_per_sec", "examples_per_sec", "frames_per_sec"):
+                    writer.add_scalar(f"perf/{k}", _snap[k], step)
+                if "peak_vram_gb" in _snap:
+                    writer.add_scalar("perf/peak_vram_gb", _snap["peak_vram_gb"], step)
+                (out_dir / "perf.json").write_text(json.dumps(_snap, indent=1), encoding="utf-8")
             if step % eval_interval == 0:
                 log_eval(step)
             if step % save_interval == 0:
