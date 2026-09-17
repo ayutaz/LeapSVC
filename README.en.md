@@ -21,7 +21,7 @@ The non-v/uv model (top) lays harmonics across every frame. The v/uv model (bott
 Through a lot of experiments we found two things: a high-quality neural vocoder for singing is sensitive to the *texture* of the mel, and the hard part for an acoustic model is drawing clean periodic content. LeapSinger starts not from noise but from a pseudo-mel that already has the shape of the pitch, so it avoids the hardest part — learning to draw the periodic content. This design gives:
 
 - **High-quality periodic content** — it draws clean, low-noise periodic content stably. This helps both the texture of the vocoder output and how well each speaker's voice is reproduced.
-- **Speed** — there is only one reverse step, so even on a single CPU core the RTF is under 0.03. You *can* use more steps, but going beyond one step actually moves the result *away* from the ground truth.
+- **Speed** — there is only one reverse step, so even on a single CPU core the RTF is under 0.03. You *can* use more steps, but going beyond one step actually moves the result *away* from the ground truth. (**That is the existing singing-synthesis (SVS) path.** The experimental **SVC path defaults to 16 steps**, chosen by a sweep: brightness is the same as at one step, but fine detail and speaker identity are clearly better at 16. See `tools/svc_defaults.py`.)
 
 Other features:
 
@@ -54,6 +54,8 @@ RTF per acoustic model, comparing Python native vs. ONNX across core counts:
 - **The NHVSing vocoder** runs at RTF under 0.1 on CPU (see the NHVSing repository for details).
 
 (Measured on Apple Silicon, 10 cores, onnxruntime CPU, a ~7-second phrase, median. Results vary by machine.)
+
+**This table is the existing SVS acoustic model alone.** The experimental **SVC path's end-to-end cost is a different quantity**: measured at **total RTF 0.464 on GPU, of which the vocoder is 0.432 (93%)** and the acoustic model only 0.006 (0.654 total on CPU). **Speeding up the acoustic model barely moves end-to-end.** We also **do not call it "real-time" even when `realtime_capable` is True** — chunk boundaries, audio I/O and sustained operation are unmeasured.
 
 The frame settings are 44.1 kHz and hop size 256. Hop size 512 is handled by averaging each pair of adjacent frames.
 
@@ -178,17 +180,18 @@ drives the existing harmonic excitation and rectified flow from precomputed cont
 features, F0, V/UV, and loudness. The existing phoneme + duration synthesis path remains
 unchanged.
 
-The model, feature-shard contract, training/evaluation wiring, and the dataset
-audit/coverage/split tooling are implemented. The content encoder is **ContentVec**
+**Training and evaluation have been run end to end.** The content encoder is **ContentVec**
 (768-dim layer 12; training uses a fixed random 256-dim subset), F0 is **RMVPE**, and SSL
-frames are aligned to the mel grid by **left (hold-previous)**. The extractor that runs ContentVec to build
-the feature shard is implemented as well: one command turns a WAV directory into a shard,
-bit-identical on re-run. Overfitting a real phrase and producing a WAV has been verified, a **multi-singer base
-model over 23 speakers / ~18 hours** has been pretrained for 60,000 steps (content is preserved
-for an unseen source singer, measured), and that base has been **fine-tuned to a target singer
-for 20,000 steps**. Speaker similarity is now measurable: ECAPA-TDNN on clips of 12 s or longer passes our
+frames are aligned to the mel grid by **left (hold-previous)**. One command turns a WAV
+directory into a feature shard, bit-identical on re-run. A **multi-singer base model over
+23 speakers / ~18 hours** has been pretrained for 60,000 steps, and that base has been
+**fine-tuned to a target singer** (Namine Ritsu). **Japanese material now covers 7 speakers /
+~21.9 hours** (Tohoku Kiritan and No.7 were added on 2026-09-17).
+
+Speaker similarity is measurable: **ECAPA-TDNN on clips of 12 s or longer** passes our
 pre-registered singing calibration, and it shows the fine-tune does move the voice toward the
-target (recovery from the floor rises from 45.1% to 54.9%).
+target (recovery from the floor rises from 45.1% to 54.9% **on the VocalSet unseen sources**;
+for **unseen Japanese speakers** see the 90.4% below).
 
 **An objective comparison against Seed-VC has been run** (26 clips, matched conditions).
 **Speaker similarity is essentially level** (0.5899 vs 0.5912 after correcting a measurement bug that mixed ceiling files into our own score; the old figure was 0.4981). **Seed-VC won the blind preference**, and our pre-registered decision
@@ -196,8 +199,8 @@ rule therefore forbids claiming LeapSVC is better. **LeapSVC is ahead on pitch f
 (F0 correlation 0.9994), voicing agreement (99.0%) and timing (73.7% vs 70.8%)** -- which is
 what conditioning directly on F0 buys.
 
-**The weak speaker identity turned out to be over-smoothing**: the predicted mel carried only
-75% of ground truth's fine detail. The vocoder and the mel representation were not at fault,
+**What then looked like weak speaker identity turned out to be over-smoothing**: the predicted
+mel carried only 75% of ground truth's fine detail. The vocoder and the mel representation were not at fault,
 no source-speaker identity leaked through, and speaker conditioning worked. Enabling the GAN
 during fine-tuning moved unseen-source recovery from 69.4% to 75.3% (Seed-VC 77.1%) **without
 costing content preservation or pitch fidelity**. **Speaker similarity could not be told apart by ear either.** A separate blind test asking which clip sounds more like the target (2026-09-15) was stopped after 6 of 12 pairs: all four decisive votes landed on whichever side was heard last, so it reached no verdict. That is consistent with the objective tie (0.5899 vs 0.5912).
