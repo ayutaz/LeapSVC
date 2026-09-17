@@ -17,6 +17,8 @@ LeapSVC の出力について 6 本中 5 本が「**音量が揺れる**」を�
 |---|---|
 | `residual_db_std` | source との log 音量の差から**平均を引いた**残差の標準偏差（dB）。**これが揺れ** |
 | `envelope_corr` | 音量の動きの相関。1 に近いほど入力の抑揚をなぞっている |
+| `slow_db_std` / `fast_db_std` | 残差を 2 Hz で分けたもの。聴取で名前が付いたのは速い側 |
+| `frame_jitter_db` | **隣り合うフレームの差**の標準偏差。`fast_db_std` は 2 Hz より速い成分すべてなので、数 Hz の抑揚のずれと **1 フレームの欠損**を区別しません（NHVSing V3.2 が直した defect の形）。**選択性は 1.6 倍しかありません**（合成信号の実測。疎な欠損は std に薄まる）ので、**この量だけで defect の有無を決めないこと** ―― 従来の指標と**順序が反転する**ことだけが根拠になります |
 
 **全体の音量差は揺れではありません。** 変換の結果として全体が大きく／小さくなるのは
 別の話なので、平均を引いてから見ます。**無音は使いません** ―― log-RMS が極端に小さくなり、
@@ -93,7 +95,8 @@ def loudness_report(source, converted, *, sr: int, hop: int,
     a, b = a[:n], b[:n]
     out: dict[str, Any] = {"n_frames_total": int(n), "n_frames_used": 0,
                            "residual_db_std": None, "envelope_corr": None,
-                           "gain_db": None, "slow_db_std": None, "fast_db_std": None}
+                           "gain_db": None, "slow_db_std": None, "fast_db_std": None,
+                           "frame_jitter_db": None}
     if n == 0:
         return out
 
@@ -110,6 +113,14 @@ def loudness_report(source, converted, *, sr: int, hop: int,
     slow = _moving_average(d, _smooth_frames(sr, hop))
     out["slow_db_std"] = float(slow.std())
     out["fast_db_std"] = float((d - slow).std())
+    # **フレーム単位の揺れ。** `fast_db_std` は 2 Hz より速い成分すべてなので、
+    # 数 Hz の抑揚のずれと 1 フレームの欠損を区別しません。隣り合うフレームの差を
+    # 取ると後者にだけ強く反応します（NHVSing V3.2 が直した defect の形）。
+    # **無音を挟んだ差は取りません** ―― そこだけ巨大な差になり、全体を支配します。
+    full = (b - a).astype(np.float64)
+    pair = keep[:-1] & keep[1:]
+    if pair.sum() >= 8:
+        out["frame_jitter_db"] = float(np.diff(full)[pair].std())
     av, bv = a[keep].astype(np.float64), b[keep].astype(np.float64)
     if av.std() > 1e-9 and bv.std() > 1e-9:
         out["envelope_corr"] = float(np.corrcoef(av, bv)[0, 1])

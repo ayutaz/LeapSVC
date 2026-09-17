@@ -2202,3 +2202,76 @@ class LoudnessStabilityTests(unittest.TestCase):
         from tools.loudness_stability import loudness_report
         z = np.zeros(44100, dtype="float32")
         self.assertIsNone(loudness_report(z, z, sr=44100, hop=256)["fast_db_std"])
+
+    def _short_dips(self, x, *, sr, hop, every, width, gain, seed=0):
+        """フレーム境界に**短い欠損**を置く。NHVSing V3.2 が直した defect の形。
+
+        1 周期ぶん（数 ms）が打ち消されるので、**1 フレームより短い**落ち込みが
+        飛び飛びに現れます。`fast_db_std`（2 Hz より速い成分すべて）はこれと
+        数 Hz の抑揚のずれを区別しません。
+        """
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        y = np.asarray(x, dtype=np.float32).copy()
+        for f in range(0, len(y) // hop - 1, every):
+            s = f * hop + int(rng.integers(0, hop))
+            y[s:s + width] *= gain
+        return y
+
+    def test_frame_jitter_separates_per_frame_dips_from_a_6hz_wobble(self):
+        # **これが V3.2 の defect を測るための量。** 6 Hz の抑揚のずれと、
+        # フレーム単位の欠損は、`fast_db_std` ではどちらも「速い成分」になる。
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        sr, hop, n = 44100, 256, 44100 * 4
+        t = np.arange(n) / sr
+        base = (0.2 * np.sin(2 * np.pi * 330 * t)).astype(np.float32)
+        wobble = base * (1.0 + 0.3 * np.sin(2 * np.pi * 6.0 * t)).astype(np.float32)
+        dips = self._short_dips(base, sr=sr, hop=hop, every=5, width=120, gain=0.15)
+
+        rw = loudness_report(base, wobble, sr=sr, hop=hop)
+        rd = loudness_report(base, dips, sr=sr, hop=hop)
+        self.assertIn("frame_jitter_db", rw)
+        # 従来の指標は 6 Hz の抑揚のずれのほうを「大きな揺れ」と見る（実測 1.88 対 0.52 dB）。
+        self.assertGreater(rw["residual_db_std"], rd["residual_db_std"] * 2)
+        self.assertGreater(rw["fast_db_std"], rd["fast_db_std"] * 2)
+        # フレーム単位で見ると**順序が反転する**（実測 0.66 対 0.41 dB）。
+        # **選択性は 1.6 倍しかありません** ―― 疎な欠損は std に薄まるので、
+        # **この量だけで defect の有無を決めないこと。** 反転することだけが根拠になります。
+        self.assertGreater(rd["frame_jitter_db"], rw["frame_jitter_db"])
+
+    def test_frame_jitter_ignores_a_slow_drift(self):
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        sr, n = 44100, 44100 * 4
+        t = np.arange(n) / sr
+        base = (0.2 * np.sin(2 * np.pi * 330 * t)).astype(np.float32)
+        slow = base * (1.0 + 0.5 * np.sin(2 * np.pi * 0.2 * t)).astype(np.float32)
+        r = loudness_report(base, slow, sr=sr, hop=256)
+        self.assertIn("frame_jitter_db", r)
+        self.assertGreater(r["residual_db_std"], 1.5)    # ゆっくり大きく動いている
+        self.assertLess(r["frame_jitter_db"], 0.5)       # フレーム単位では静か
+
+    def test_frame_jitter_is_none_without_usable_frames(self):
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        z = np.zeros(44100, dtype="float32")
+        r = loudness_report(z, z, sr=44100, hop=256)
+        self.assertIn("frame_jitter_db", r)
+        self.assertIsNone(r["frame_jitter_db"])
+
+    def test_frame_jitter_does_not_cross_a_silent_gap(self):
+        # 無音を挟んで飛ぶと、**そこだけ巨大な差**になる。隣り合う 2 フレームが
+        # どちらも使える場合だけ差を取る。
+        import numpy as np
+
+        from tools.loudness_stability import loudness_report
+        tone = self._tone(44100, amp=0.2)
+        gap = np.zeros(22050, dtype="float32")
+        src = np.concatenate([tone, gap, tone])
+        r = loudness_report(src, src.copy(), sr=44100, hop=256)
+        self.assertIn("frame_jitter_db", r)
+        self.assertLess(r["frame_jitter_db"], 0.5)
