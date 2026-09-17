@@ -11,8 +11,8 @@ rectified flow をそのまま使い、**条件だけを「音素 + 持続長」
     SVS: 音素 + 持続長 + F0                      -> LeapSinger -> mel + F0 -> NHVSing -> WAV
     SVC: source WAV -> content / F0 / UV / 音量  -> LeapSVC    -> mel + F0 -> NHVSing -> WAV
 
-> **このリポジトリは [wavtechyukky/LeapSinger](https://github.com/wavtechyukky/LeapSinger) の
-> fork で、default branch が SVC 開発ブランチ（`feature/svc`）です。**
+> **このリポジトリは [LeapSinger](https://github.com/wavtechyukky/LeapSinger) から派生し、
+> 独立して開発しています**（trunk は `main`）。
 > **既存の SVS 経路は変更していません**（後半の「SVS 経路」節。上流と同じ内容です）。
 > **学習済みの SVC 重みは配布していません** — 学習素材のライセンスが未解決のためです
 > （[ライセンス](#ライセンス)）。
@@ -203,6 +203,7 @@ extra は毎回すべて並べてください。実行は `uv run python ...`、
 | 低い声からの移調 | **+7 半音**（`SVC_TRANSPOSE_LOW_VOICE`） | 掃引で決定。**それまでの +12 は両方の軸で劣ります**（回復率 90.8% → 81.6%、CER の上限との差 +12.5 → +27.0 点）。n=8・1 話者・1 target なので、別の声では測り直すこと |
 | 持ち込み音源 | **`--match-loudness` を付ける** | 学習は生の音量で特徴を取ります。配信用の音源は peak 1.0 付近まで上げられており（波音リツ DB は peak 0.107）、明るさが上限比 −47% まで落ちます。**プロのスタジオ録音でも必要**でした（0.71x → 0.93x） |
 | 入力の音量 | **推論側で peak 正規化しない** | 同じ理由です。正規化するとモデルが低域を持ち上げて高域を削ります（spectral centroid 620 → 368 Hz）。**内容指標では検知できません**（content cos は 0.8217 → 0.8096 しか動かない） |
+| ボコーダーの版 | **SVC は V3.1 据え置き**（`checkpoints/nhv_v3_1.onnx`）。V3.2 も同梱しています | 上限はボコーダーごとに変わるので、V3.2 へ移すと**この README のすべての「上限との差」が測り直し**になります。V3.2 は**高音域でフレーム単位に波形が急激に弱まる現象**を直しており、**聴取で報告された「音量が揺れる」に対応する可能性があります** — 移行は測り直しとセットで行います |
 | 上限 | **1 度作って `--ceiling-from` で使い回す** | ボコーダーの出力が run ごとに変わるためです。実測で 26 clip 中 6 本の上限 CER が 5 点を超えてずれました（ASR は離散なので、わずかな音の差で書き起こしが別物になります） |
 
 **明瞭度の律速はデータの量と多様性です。** `num_steps`・GAN の有無・fine-tune の step 数・
@@ -396,7 +397,10 @@ F0の抽出にはRMVPEを使います（RMVPEはマルチプロセスで動か�
 - `nhv_v3_2.onnx` — hop size256のmelとF0を受け取ります。
 - `nhv_v3_2x.onnx` — hop size512のmelとF0を受け取ります。
 
-同梱しているのは **V3.2** です（高音域でフレーム単位に波形が急激に弱まる現象を、LTV フィルタの重ね合わせを Hann 窓化して解消した最新のウェイト。入出力の仕様は V3.1 と同一なので差し替えるだけで使えます。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
+`nhv_v3_1.onnx` と `nhv_v3_1x.onnx`（V3.1）も置いてあります。**SVC 経路の測定がすべて
+V3.1 の上限を基準にしている**ため、測り直しが済むまで消せません。
+
+既定は **V3.2** です（高音域でフレーム単位に波形が急激に弱まる現象を、LTV フィルタの重ね合わせを Hann 窓化して解消した最新のウェイト。入出力の仕様は V3.1 と同一なので差し替えるだけで使えます。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
 
 ### オプション
 

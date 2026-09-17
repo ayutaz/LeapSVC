@@ -28,7 +28,10 @@ The MIT license above covers the LeapSinger **source code** only. It does NOT
 cover the following, which have their own separate terms:
 
   - The bundled neural vocoder ONNX files (`checkpoints/nhv_v3_2.onnx`,
-    `checkpoints/nhv_v3_2x.onnx`). These come from the NHVSing project
+    `checkpoints/nhv_v3_2x.onnx`, plus the previous weights
+    `checkpoints/nhv_v3_1.onnx` / `checkpoints/nhv_v3_1x.onnx`, which are kept
+    because every SVC measurement is stated relative to a V3.1 ceiling). These
+    come from the NHVSing project
     (https://github.com/wavtechyukky/NHVSing/) and are governed by its license.
 
   - The trained acoustic-model checkpoints distributed via GitHub Releases, and

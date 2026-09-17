@@ -11,8 +11,8 @@ singing-synthesis model [LeapSinger](https://github.com/wavtechyukky/LeapSinger)
     SVS: phonemes + durations + F0                  -> LeapSinger -> mel + F0 -> NHVSing -> WAV
     SVC: source WAV -> content / F0 / UV / loudness -> LeapSVC    -> mel + F0 -> NHVSing -> WAV
 
-> **This repository is a fork of [wavtechyukky/LeapSinger](https://github.com/wavtechyukky/LeapSinger)
-> whose default branch is the SVC development branch (`feature/svc`).**
+> **This repository started from [LeapSinger](https://github.com/wavtechyukky/LeapSinger) and
+> is now developed independently** (trunk is `main`).
 > **The existing SVS path is unchanged** (see "SVS path" near the end — same content as upstream).
 > **No trained SVC weights are distributed**, because the training material's licensing is
 > unresolved ([License](#license)).
@@ -214,6 +214,7 @@ feeds synthetic waveforms, so it **proves the wiring, never the quality**.
 | Transpose for low voices | **+7 semitones** (`SVC_TRANSPOSE_LOW_VOICE`) | Chosen by sweep. **The previous +12 is worse on both axes** (recovery 90.8% → 81.6%; CER gap from ceiling +12.5 → +27.0 pts). n=8, one speaker, one target — re-measure for other voices |
 | Material you bring in | **Pass `--match-loudness`** | Training takes features at the raw level. Streaming-ready material is pushed to near peak 1.0 (the Namine Ritsu DB peaks at 0.107), which drops brightness to −47% of the ceiling. **Even professional studio recordings need it** (0.71x → 0.93x) |
 | Input level | **Never peak-normalise at inference** | Same reason. Normalising makes the model lift the low end and shave the highs (spectral centroid 620 → 368 Hz). **Content metrics do not catch this** (content cos moves only 0.8217 → 0.8096) |
+| Vocoder version | **SVC stays on V3.1** (`checkpoints/nhv_v3_1.onnx`); V3.2 is bundled too | The ceiling moves with the vocoder, so adopting V3.2 means **re-measuring every "gap from ceiling" in this README**. V3.2 fixes **an abrupt per-frame weakening of the waveform at high pitch**, which **may be the defect listeners reported as a wavering level** — so the switch has to come with the re-measurement |
 | Ceiling | **Build once, reuse via `--ceiling-from`** | The vocoder's output changes run to run. Measured: 6 of 26 clips shifted their ceiling CER by more than 5 points, because ASR is discrete and a tiny acoustic difference rewrites a transcript |
 
 **Intelligibility is limited by data volume and diversity.** `num_steps`, the GAN, fine-tune
@@ -410,7 +411,10 @@ Two NHVSing vocoders are bundled under `checkpoints/`.
 - `nhv_v3_2.onnx` — takes a hop-size-256 mel and F0.
 - `nhv_v3_2x.onnx` — takes a hop-size-512 mel and F0.
 
-The bundled version is **V3.2** — the latest weights. It fixes an abrupt per-frame weakening of the waveform at high pitch by switching the LTV filter's overlap-add to a Hann window. The input/output contract is identical to V3.1, so it is a drop-in replacement (see [NHVSing](https://github.com/wavtechyukky/NHVSing/) for details).
+`nhv_v3_1.onnx` and `nhv_v3_1x.onnx` (V3.1) are kept alongside them, because **every SVC
+measurement is relative to a V3.1 ceiling** and cannot be restated until it is re-measured.
+
+The default is **V3.2** — the latest weights. It fixes an abrupt per-frame weakening of the waveform at high pitch by switching the LTV filter's overlap-add to a Hann window. The input/output contract is identical to V3.1, so it is a drop-in replacement (see [NHVSing](https://github.com/wavtechyukky/NHVSing/) for details).
 
 ### Options
 
