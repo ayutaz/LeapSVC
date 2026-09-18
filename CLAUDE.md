@@ -80,6 +80,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
     LEAPSINGER_INTEGRATION=1 uv run python -m unittest test_svc_preprocess_integration -v  # 実モデル（既定は skip）
     uv run python -m unittest test_svc_model.HarmonicSVCModelTests.test_forward_and_infer_reuse_flow_with_svc_conditioning
     uv run python tools/hooks/test_guard.py    # コマンド guard の回帰テスト（55 件）
+    uv run python tools/check_links.py         # md のリンクとアンカー（CI も回す）
 
     # 話者類似度。**encoder を替えたら必ず較正からやり直すこと**
     uv run python tools/speaker_calibrate.py --root .m0data/vocalset_calib \
@@ -96,7 +97,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **498 件**（`test_svc_model` 58 / `test_svc_preprocess` 115 / `test_svc_dataset` 82 / `test_svc_metrics` 243）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **514 件**（`test_svc_model` 64 / `test_svc_preprocess` 115 / `test_svc_dataset` 82 / `test_svc_metrics` 253）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -176,6 +177,8 @@ manifest には encoder の model revision と層、sample rate、hop、**SSL �
 | skill | `leapsinger-docs` | 確度ラベルと主張規則を保ったままドキュメントを更新する作法 |
 | skill | `vast-instance` | vast.ai インスタンスの検索・作成・回収・破棄、実運用で踏んだ落とし穴 |
 | hook | `tools/hooks/guard_commands.py` | `PreToolUse` で「常に間違い」なコマンドを実行前に止める（回帰テスト 55 件） |
+| CI | `.github/workflows/ci.yml` | push / PR で lock・ruff・guard・単体テストを回す。**学習は回しません** |
+| CD | `.github/workflows/release.yml` | tag `v*` で sdist と wheel を作り Release へ添付。**重みは配りません**（配布物に `.onnx` / `.pt` / `.wav` が入ったら失敗させます） |
 
 hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と `.py` だけでなく `-c` と `-`（stdin）も**。この 2 つは素通りしていました）、**rebase / merge の途中での `uv run` / `uv sync` / `uv add`**（作業ツリーが過去のコミットなので、その時点の `pyproject.toml` で環境が再同期され、生成された `uv.lock` が rebase を止めます。実際に torch が 2.14 → 2.13 に入れ替わって中断しました）、`.env` の staging、`git push --force`、`git reset --hard`、`log|data|checkpoints|.git` の `rm -rf`、`vastai` の直接叩き（料金確認を飛ばすため）、`unittest discover`、**手元での学習**（device によらず）、**既存 ckpt がある run へ `--init_from` を渡す**こと（`train.py` はこれを黙って無視して自動再開します）、**取得スクリプトの `-m` 実行**（`_gdrive` の兄弟 import が解決できず必ず失敗）、**`CUDA_VISIBLE_DEVICES=""`**（空文字は未設定扱いで CUDA が隠れない。`-1` が要る）、**角括弧で自己一致を外していない `pkill -f`**（このハーネスは `bash -c` で走るのでシェル自身に一致し、後続のコマンドごと落ちます）。
 
@@ -206,6 +209,30 @@ hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と 
 **M4 で分かった trade-off（実測）:** fine-tune を進めるほど **target らしさは上がり**（話者類似度の回復率 45.1% → 58.0%、自己再構成は上限比 94.8% → 98.1%）、**未知 source の内容保持は単調に落ちます**（cos 0.8599 → 0.8359）。config に事前登録した規則（未知 source の cos が base から 0.02 を超えて落ちた checkpoint は選ばない）で **`ckpt_010000` を選択**しました。train loss だけで選ぶと 20,000 step を選んでしまいます。
 
 **話者類似度は encoder とクリップ長の両方に依存します（実測）。** `transformers` の x-vector は歌声の同性ペアを分離できず（重なり 83.3%、12 秒にしても 77.0%）、**ECAPA-TDNN を 12 秒以上**で使って初めて事前登録した合格条件（20% 以下）を満たします（19.8%、20 秒で 17.3%）。`tools/speaker_similarity.py` は **12 秒未満のクリップを拒否**します。一度「測れない」と結論しましたが、原因の半分は 6 秒に切って測っていたことでした。**encoder を替えたら `tools/speaker_calibrate.py` で必ず較正をやり直すこと。**
+
+## CI / CD（2026-09-18 追加）
+
+`.github/workflows/ci.yml` が push と PR で回ります。**学習は回しません**（学習は vast.ai と
+いう決定のため）。
+
+| job | runner | 中身 |
+|---|---|---|
+| `lock` | ubuntu | `uv lock --check`（**lock はコミット対象**なので、忘れを止める） |
+| `lint` | ubuntu | `uvx ruff@<pyproject の pin> check .`。**版は pyproject から採る**ので真実の在処が 1 つ |
+| `guard` | ubuntu | `tools/hooks/test_guard.py`（55 件）。stdlib だけなので `--no-project` |
+| `tests` | **macOS** | `uv sync --locked` + 単体テスト 514 件 + ruff + リンク検査 |
+
+**単体テストを Linux で回していません（理由を残します）。** pyproject は Linux / Windows の
+torch を **CUDA index (cu130)** に固定していて、lock 上の torch + nvidia wheel は **4.23 GB**
+あります（展開するとさらに増える）。GitHub の ubuntu runner の空きは 14 GB しかないので、
+**PyPI の CPU/MPS 版が入る macOS**（torch 2.13.0 arm64 = **111 MB**）で回しています。
+**Linux で回すには pyproject の index を CPU channel に変える必要があり、それは手元の GPU
+環境を壊す変更なので CI のために入れません。**
+
+`.github/workflows/release.yml` は tag `v*` で `uv build` を回し、sdist と wheel を Release へ
+添付します。**重みは配りません** ―― 学習素材のライセンスが未解決なので、配布物に `.onnx` /
+`.pt` / `.wav` / `.npz` が入っていたら**失敗させます**（ライセンス境界を人の注意力に任せない
+ため）。**PyPI へは上げません**（名前の確定と token が要るので人の判断で）。
 
 ## 既知の落とし穴
 

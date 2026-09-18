@@ -1,0 +1,86 @@
+name: Release
+
+# **配るのはコードだけです。**
+#
+# 学習済みの重みは配布しません（学習素材のライセンスが未解決。GTSinger が
+# CC BY-NC-SA 4.0 で、ShareAlike が重みに及ぶかは条文から決まりません）。同梱の
+# ボコーダー ONNX も MIT の対象外です。**したがってこの workflow は sdist と wheel
+# （`leapsinger` パッケージのコードのみ）を作って Release に添付するだけ**で、
+# PyPI へは上げません（名前の確定と token が要るので、上げるなら人の判断で）。
+#
+# **重みや音声が混ざっていないことを毎回検査します。** 配布物に `.onnx` / `.pt` /
+# `.wav` が入ったら失敗させます ―― ライセンス境界を人の注意力に任せないためです。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: sdist と wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.11.8"
+
+      # `uv build` は build backend（setuptools）を隔離環境に入れるだけなので、
+      # torch は要りません（CUDA wheel を引かずに済みます）。
+      - name: build
+        run: uv build
+
+      - name: 配布物に重みと音声が混ざっていないこと
+        run: |
+          set -euo pipefail
+          uv run --no-project --python 3.13 python - <<'PY'
+          import glob
+          import sys
+          import tarfile
+          import zipfile
+
+          BAD = (".onnx", ".pt", ".pth", ".wav", ".npz", ".ckpt")
+          found = []
+          for w in sorted(glob.glob("dist/*.whl")):
+              names = zipfile.ZipFile(w).namelist()
+              print(f"{w}: {len(names)} 件")
+              found += [f"{w}:{n}" for n in names if n.endswith(BAD)]
+          for t in sorted(glob.glob("dist/*.tar.gz")):
+              with tarfile.open(t) as tf:
+                  names = tf.getnames()
+              print(f"{t}: {len(names)} 件")
+              found += [f"{t}:{n}" for n in names if n.endswith(BAD)]
+          if not glob.glob("dist/*"):
+              sys.exit("dist/ が空です")
+          if found:
+              for f in found:
+                  print(f"  NG {f}")
+              sys.exit("配布物に重みまたは音声が入っています。ライセンス境界を確認すること")
+          print("OK: コードだけです")
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/*
+
+      # tag からの起動のときだけ Release を作ります（workflow_dispatch は build の確認用）。
+      - name: Release へ添付
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file - <<'NOTE'
+          コード（MIT）の sdist と wheel です。
+
+          **学習済みの重みは含みません。** 学習素材のライセンスが未解決のため、
+          研究・個人利用のみという決定になっています（`doc/svc-dataset-ledger.md`）。
+          同梱のボコーダー ONNX も MIT の対象外です。
+          NOTE
