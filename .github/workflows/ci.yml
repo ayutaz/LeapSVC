@@ -1,0 +1,101 @@
+name: CI
+
+# **学習は回しません。** 学習は vast.ai の Linux インスタンスで行うという決定
+# （CLAUDE.md）なので、CI が見るのは lint・単体テスト・lock・コマンド guard だけです。
+# **疎通確認（tools/smoke/run_smoke.py）は CI に入れていません。** ネットワークと
+# 事前学習モデル（ContentVec / RMVPE の自動ダウンロード）が要るので、CI に入れると
+# 外の調子で落ちるようになります。依存を変えた後・環境を移した後は、手元か
+# インスタンスで回してください（leapsinger-verify skill）。
+#
+# **単体テストだけ macOS で回します（理由を残します）。** pyproject は Linux / Windows の
+# torch を **CUDA index (cu130)** に固定していて、`uv.lock` 上の torch + nvidia wheel は
+# **4.23 GB**（展開するとさらに増える）あります。GitHub の ubuntu runner の空きは 14 GB
+# しかないので、テストは **PyPI の CPU/MPS 版が入る macOS**（torch 2.13.0 arm64 =
+# 111 MB）で回します。**Linux で回すには pyproject の index を CPU channel へ変える
+# 必要があり、それは手元の GPU 環境を壊す変更なので、CI のために入れません。**
+# lint / lock / guard は torch が要らないので ubuntu で回します。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同じ ref に新しい push が来たら古い run は捨てる。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 手元と同じ uv に固定する。上げるときは CLAUDE ルールどおり lock も見直すこと。
+  UV_VERSION: "0.11.8"
+
+jobs:
+  lock:
+    name: uv.lock が最新か
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      # **`uv.lock` はコミット対象**（CLAUDE.md）。pyproject を触って lock を忘れると、
+      # 環境が人によって変わります。`--check` は書き換えずに判定します。
+      - run: uv lock --check
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      # **torch を入れずに lint だけ回します。** 版は pyproject の pin から採るので、
+      # 真実の在処が 2 つになりません（ここに数字を書くと片方だけ上がります）。
+      - name: ruff（版は pyproject の pin から）
+        run: |
+          set -euo pipefail
+          v=$(grep -oP '"ruff>=\K[0-9.]+' pyproject.toml)
+          echo "pyproject の pin: ruff $v"
+          uvx "ruff@$v" check .
+
+  guard:
+    name: コマンド guard の回帰テスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      # guard は stdlib だけで動くので、プロジェクトを同期しません（torch が不要）。
+      # **`--no-project` でも Python は uv が用意します**（素の python は使わない規約）。
+      - run: uv run --no-project --python 3.13 python tools/hooks/test_guard.py
+
+  tests:
+    name: 単体テスト（macOS）
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      # **extra は「これだけにする」指定**なので、必要なものを全部並べます
+      # （`--extra eval` だけを渡すと train / export / dev が消えます）。
+      # 手元の開発環境と同じ構成にしておかないと、遅延 import の失敗を CI が見逃します。
+      - name: 依存を同期（lock どおり）
+        run: uv sync --locked --extra train --extra export --extra dev --extra eval
+      # **`unittest discover` は使いません**（収集条件が暗黙で、走った件数が分かりにくい）。
+      # CLAUDE.md と同じ 4 本を明示します。
+      - name: 単体テスト
+        run: uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics
+      - name: ruff（lock された版で）
+        run: uv run ruff check .
+      # 単体テストの中でも回していますが、落ちたときに原因が読める形でもう一度出します。
+      - name: md のリンクとアンカー
+        run: uv run python tools/check_links.py

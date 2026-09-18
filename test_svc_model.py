@@ -644,6 +644,67 @@ class SpeakerCalibrationTests(unittest.TestCase):
         self.assertIn("passed", rep["verdict"])
 
 
+class DocLinkTests(unittest.TestCase):
+    """md のリンク切れとアンカー切れ。**CI で回すために repo 内の道具にした。**
+
+    それまで scratchpad の使い捨てスクリプトで確かめていたので、**回し忘れると
+    そのまま通りました**。アンカー切れは実際に作ったことがあります（ファイルは
+    在るのに見出しが無い。日本語見出しの slug は記号の落ち方が直感と違います）。
+    """
+
+    def _write(self, files):
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, d, True)
+        for name, text in files.items():
+            p = d / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+        return d
+
+    def test_a_link_to_a_missing_file_is_reported(self):
+        from tools.check_links import broken_links
+        d = self._write({"README.md": "[ない](doc/nothing.md) を指す\n"})
+        bad = broken_links(d, ["README.md"])
+        self.assertEqual([(b["target"], b["kind"]) for b in bad],
+                         [("doc/nothing.md", "file")])
+
+    def test_a_link_to_a_missing_anchor_is_reported(self):
+        # **ファイルが在るだけでは足りません。** 見出しが無ければ飛べません。
+        from tools.check_links import broken_links
+        d = self._write({"README.md": "[節](doc/a.md#ない節) を指す\n",
+                         "doc/a.md": "# 題\n\n## 在る節\n"})
+        bad = broken_links(d, ["README.md"])
+        self.assertEqual([(b["target"], b["kind"]) for b in bad],
+                         [("doc/a.md#ない節", "anchor")])
+
+    def test_a_japanese_anchor_that_exists_is_accepted(self):
+        from tools.check_links import broken_links
+        d = self._write({"README.md": "[節](doc/a.md#既知の落とし穴)\n",
+                         "doc/a.md": "## 既知の落とし穴\n"})
+        self.assertEqual(broken_links(d, ["README.md"]), [])
+
+    def test_an_anchor_in_the_same_file_is_accepted(self):
+        from tools.check_links import broken_links
+        d = self._write({"README.md": "[ここ](#ライセンス)\n\n## ライセンス\n"})
+        self.assertEqual(broken_links(d, ["README.md"]), [])
+
+    def test_external_links_are_never_fetched(self):
+        # **CI はネットワークを使いません。** http と mailto は対象外。
+        from tools.check_links import broken_links
+        d = self._write({"README.md": "[x](https://example.invalid/none)\n"
+                                      "[y](mailto:a@example.invalid)\n"})
+        self.assertEqual(broken_links(d, ["README.md"]), [])
+
+    def test_the_repository_has_no_broken_links(self):
+        """**これが本番の検査。** doc / README / CLAUDE.md / skill を全部見る。"""
+        from tools.check_links import DEFAULT_GLOBS, broken_links, collect
+        root = Path(__file__).parent
+        files = collect(root, DEFAULT_GLOBS)
+        self.assertGreater(len(files), 10, "md の収集に失敗している")
+        self.assertEqual(broken_links(root, files), [])
+
+
 class ToolHelpTests(unittest.TestCase):
     """`tools/*.py --help` が落ちないこと。
 

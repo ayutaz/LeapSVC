@@ -63,33 +63,15 @@ description: doc/ 配下と README / CLAUDE.md を更新するときの作法。
 
 ## 5. 出す前に検証する
 
-リンク切れは事故なので機械的に確かめる。
+リンク切れは事故なので機械的に確かめる。**道具になっているので、貼り付けずに呼ぶ。**
 
 ```bash
-uv run python - <<'PY'
-import glob, os, re
-bad = []
-files = (["README.md", "README.en.md", "CLAUDE.md"] + sorted(glob.glob("doc/*.md"))
-         + sorted(glob.glob(".claude/skills/*/SKILL.md")))      # skill 内のリンクも壊れる
-for f in files:
-    s = open(f, encoding="utf-8").read()
-    for m in re.finditer(r"\[([^\]]*)\]\(([^)]+)\)", s):
-        t = m.group(2)
-        if t.startswith(("http", "mailto:")):
-            continue
-        path, _, anchor = t.partition("#")
-        tgt = os.path.normpath(os.path.join(os.path.dirname(f), path)) if path else f
-        if path and not os.path.exists(tgt):
-            bad.append((f, t, "file")); continue
-        if anchor and os.path.exists(tgt):                       # 見出しアンカーも確かめる
-            heads = re.findall(r"^#{2,6}\s+(.+)$", open(tgt, encoding="utf-8").read(), re.M)
-            slugs = {re.sub(r"[^\w぀-ヿ一-鿿-]", "",
-                            h.lower().replace(" ", "-").replace("`", "")) for h in heads}
-            if anchor not in slugs:
-                bad.append((f, t, "anchor"))
-print("broken:", bad or "none")
-PY
+uv run python tools/check_links.py
 ```
+
+README / `README.en.md` / CLAUDE.md / `doc/*.md` / `.claude/skills/*/SKILL.md` を見る。
+**CI（`.github/workflows/ci.yml`）でも回っている**ので、PR でも止まる。単体テストにも
+入っている（`test_svc_model.DocLinkTests`）。
 
 **アンカーまで見ること。** ファイルは在るのに見出しが無いリンクを実際に作りました
 （日本語見出しの slug は記号の落ち方が直感と違います）。

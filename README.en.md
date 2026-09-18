@@ -1,5 +1,7 @@
 # LeapSVC
 
+[![CI](https://github.com/ayutaz/LeapSVC/actions/workflows/ci.yml/badge.svg)](https://github.com/ayutaz/LeapSVC/actions/workflows/ci.yml)
+
 **日本語**: [README.md](README.md)
 
 LeapSVC is an acoustic model for **singing voice conversion (SVC)**. It takes a sung WAV and
@@ -203,7 +205,7 @@ charged as content degradation) or which has fewer than 3 clips.
     uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics
     uv run ruff check .
 
-There are **498 unit tests**, none of which need heavy models or network access. `run_smoke.py`
+There are **514 unit tests**, none of which need heavy models or network access. `run_smoke.py`
 feeds synthetic waveforms, so it **proves the wiring, never the quality**.
 
 ## Defaults and caveats (all measured)
