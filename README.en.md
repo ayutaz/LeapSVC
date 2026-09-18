@@ -16,8 +16,9 @@ singing-synthesis model [LeapSinger](https://github.com/wavtechyukky/LeapSinger)
 > **This repository started from [LeapSinger](https://github.com/wavtechyukky/LeapSinger) and
 > is now developed independently** (trunk is `main`).
 > **The existing SVS path is unchanged** (see "SVS path" near the end — same content as upstream).
-> **No trained SVC weights are distributed**, because the training material's licensing is
-> unresolved ([License](#license)).
+> **No trained SVC weights are distributed at this time**, because the training material's
+> licensing is unresolved. **We may publish them if that is resolved, but we promise neither
+> that nor a date** ([License](#license)).
 
 ## What LeapSVC is
 
@@ -429,7 +430,7 @@ The default is **V3.2** — the latest weights. It fixes an abrupt per-frame wea
 
 The code is MIT (`LICENSE`). However, the bundled vocoder ONNX files (`checkpoints/nhv_v3_2*.onnx`), the trained models distributed via Releases, and the singing databases used to train them are **not** covered by MIT — they follow their own licenses and terms of use (see the Acknowledgments below and `CREDITS.txt` in the model release).
 
-**The SVC path is more restricted.** Its base model is trained on **GTSinger (CC BY-NC-SA 4.0 — non-commercial, ShareAlike)**, and whether ShareAlike reaches trained weights is not settled by the license text. **No SVC weights are distributed**: the project decision is research and personal use only (`doc/svc-dataset-ledger.md`). GTSinger's README also forbids generating a specific person's singing voice without their consent, so **converting a voice requires the target singer's consent**, independently of any software license. See the SVC NOTICE in `LICENSE`.
+**The SVC path is more restricted.** Its base model is trained on **GTSinger (CC BY-NC-SA 4.0 — non-commercial, ShareAlike)**, and whether ShareAlike reaches trained weights is not settled by the license text. **No SVC weights are distributed**: the project decision is research and personal use only (`doc/svc-dataset-ledger.md`). **We may publish them once the licensing is settled, but we promise neither that nor a date** — three things have to be resolved first: how ShareAlike applies to trained weights, Natsume Yuuri's terms (which forbid using audio derived from the database as machine-learning data), and Oniku Kurumi's silence on weight distribution. GTSinger's README also forbids generating a specific person's singing voice without their consent, so **converting a voice requires the target singer's consent**, independently of any software license. See the SVC NOTICE in `LICENSE`.
 
 ## Acknowledgments
 
