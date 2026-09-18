@@ -1166,3 +1166,36 @@ class MinBandwidthFromMelTests(unittest.TestCase):
         from preprocess.svc.sidecar import audit_thresholds_for_mel
         th = audit_thresholds_for_mel(MelSpec(), max_silence_ratio=0.9)
         self.assertEqual(th.max_silence_ratio, 0.9)
+
+
+class SidecarSongKeyRealTitleTests(unittest.TestCase):
+    """**実際の題名で確かめる。** 自分で作った文字列だけで通したテストは、実データで落ちた。
+
+    - 想定していた `歌わせて` ではなく **`うたった`**（ひらがな）が実データの表記だった。
+    - `Artist - Song` を区切り記号で割ると、**アーティスト名が曲名になる**（実測で
+      `Misumi - アンダードッグ feat.flower` が `misumi` に潰れた）。曲名が話者名に潰れると、
+      その歌手の全曲が 1 曲として扱われ、曲単位 split が効かなくなる。
+    """
+
+    def test_the_real_symag_title_folds_to_the_song(self):
+        from preprocess.svc.sidecar import song_key
+        title = "ブリキノダンス (New Vocal ver.)　うたった【SymaG／島爺】"
+        self.assertEqual(song_key({"title": title}), "ブリキノダンス")
+
+    def test_hiragana_cover_markers_are_stripped(self):
+        from preprocess.svc.sidecar import song_key
+        self.assertEqual(song_key({"title": "夜に駆ける うたってみた"}), "夜に駆ける")
+
+    def test_an_artist_prefixed_title_does_not_collapse_to_the_artist(self):
+        from preprocess.svc.sidecar import song_key
+        key = song_key({"title": "Misumi - アンダードッグ feat.flower"})
+        self.assertNotEqual(key, "misumi")
+        self.assertIn("アンダードッグ", key)
+
+    def test_featured_singers_are_stripped(self):
+        from preprocess.svc.sidecar import song_key
+        self.assertNotIn("flower", song_key({"title": "アンダードッグ feat.flower"}))
+
+    def test_a_slash_separated_title_keeps_the_head(self):
+        from preprocess.svc.sidecar import song_key
+        self.assertEqual(song_key({"title": "水平線／歌ってみた"}), "水平線")

@@ -33,13 +33,22 @@ SPEAKER_CATEGORIES = frozenset({"cover"})
 # YouTube の題名に付く装飾。曲名を揃えるために落とす。**これは heuristic です** ――
 # 完全な曲名抽出ではないので、結果は `duplicate_groups()` で目視できるようにしてあります。
 _BRACKETS = re.compile(r"[【\[（(][^】\]）)]*[】\]）)]")
+# **実データで確かめた表記を入れること。** 想定していた `歌わせて` ではなく `うたった` が
+# 実際の表記だった（`--0fvYUtDas`）。自作の文字列だけで通したテストは実データで落ちる。
 _MARKERS = re.compile(
-    r"(歌ってみた|唄ってみた|歌わせて|カバー|cover(?:ed)?(?:\s+by)?|"
-    r"music\s*video|official(?:\s+video)?|mv|full\s*ver\.?|short\s*ver\.?)",
+    r"(歌っ?てみた|唄っ?てみた|うたっ?てみた|歌った|唄った|うたった|歌わせて|"
+    r"カバー|cover(?:ed)?(?:\s+by)?|music\s*video|official(?:\s+video)?|"
+    r"mv|full\s*ver\.?|short\s*ver\.?)",
     re.IGNORECASE,
 )
+# `feat. <歌手>` は曲名の一部ではない。落とさないと同じ曲が別名になる。
+_FEAT = re.compile(r"\s*(feat\.?|ft\.?|featuring)\s*\S.*$", re.IGNORECASE)
 # 区切り記号。最初の区切りより前を曲名とみなす。
-_SPLIT = re.compile(r"[／/|｜~〜\-–—]")
+#
+# **ハイフンを入れないこと。** `Artist - Song` が実在する（`Misumi - アンダードッグ`）ので、
+# 割るとアーティスト名が曲名になり、**その歌手の全曲が 1 曲へ潰れます**（GTSinger で
+# 1,723 ファイルが 1 つの名前に潰れたのと同じ壊れ方）。
+_SPLIT = re.compile(r"[／/|｜]")
 
 
 def speaker_key(meta: Mapping[str, Any]) -> str | None:
@@ -75,7 +84,7 @@ def song_key(meta: Mapping[str, Any]) -> str:
     title = str(meta.get("title") or "")
     if not title.strip():
         raise ValueError("title is empty")
-    stripped = _MARKERS.sub(" ", _BRACKETS.sub(" ", title))
+    stripped = _MARKERS.sub(" ", _FEAT.sub(" ", _BRACKETS.sub(" ", title)))
     head = _SPLIT.split(stripped)[0]
     for candidate in (head, stripped, title):
         try:
