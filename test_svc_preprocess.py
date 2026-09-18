@@ -1065,3 +1065,104 @@ class LoudnessMatchGainTests(unittest.TestCase):
         from preprocess.svc.loudness import loudness_match_gain
         with self.assertRaises(ValueError):
             loudness_match_gain(self._wav(0.5), {}, hop=self.HOP, n_fft=self.N_FFT)
+
+
+class SidecarSpeakerTests(unittest.TestCase):
+    """WebDataset の sidecar JSON から話者 id を決める（doc/svc-plan.md 12 節 P0-4）。
+
+    **`official` の channel は話者になりません。** 実測で `Warner Music Japan` が
+    含まれており、レーベルの公式チャンネルは複数アーティストを抱えます。
+    """
+
+    def test_a_cover_channel_becomes_the_speaker_key(self):
+        from preprocess.svc.sidecar import speaker_key
+        meta = {"channel_id": "UC-abc", "dataset_category": "cover"}
+        self.assertEqual(speaker_key(meta), "UC-abc")
+
+    def test_an_official_channel_is_not_a_speaker(self):
+        from preprocess.svc.sidecar import speaker_key
+        meta = {"channel_id": "UC-warner", "dataset_category": "official",
+                "channel_title": "Warner Music Japan"}
+        self.assertIsNone(speaker_key(meta))
+
+    def test_a_missing_channel_id_is_not_a_speaker(self):
+        from preprocess.svc.sidecar import speaker_key
+        self.assertIsNone(speaker_key({"dataset_category": "cover"}))
+
+    def test_an_unknown_category_is_not_a_speaker(self):
+        from preprocess.svc.sidecar import speaker_key
+        self.assertIsNone(speaker_key({"channel_id": "UC-x", "dataset_category": "diverse"}))
+
+
+class SidecarSongKeyTests(unittest.TestCase):
+    """cover が同じ曲を指すとき、**同じ曲名へ畳む**（別名にすると曲単位 split が漏れる）。"""
+
+    def test_two_decorated_titles_of_the_same_song_share_a_key(self):
+        from preprocess.svc.sidecar import song_key
+        a = song_key({"title": "ブリキノダンス (New Vocal ver.)　歌わせて【SymaG/シャマ】"})
+        b = song_key({"title": "ブリキノダンス／歌ってみた【あるふぁきゅん。】"})
+        self.assertEqual(a, b)
+
+    def test_cjk_is_kept(self):
+        from preprocess.svc.sidecar import song_key
+        self.assertEqual(song_key({"title": "夜に駆ける"}), "夜に駆ける")
+
+    def test_ascii_titles_are_casefolded_and_symbols_folded(self):
+        from preprocess.svc.sidecar import song_key
+        self.assertEqual(song_key({"title": "Heartful Song"}),
+                         song_key({"title": "heartful_song"}))
+
+    def test_a_title_that_is_only_decoration_keeps_the_folded_title(self):
+        from preprocess.svc.sidecar import song_key
+        self.assertEqual(song_key({"title": "【歌ってみた】"}), "歌ってみた")
+
+    def test_an_empty_title_is_rejected(self):
+        from preprocess.svc.sidecar import song_key
+        with self.assertRaises(ValueError):
+            song_key({"title": "   "})
+
+    def test_duplicate_groups_lists_only_the_titles_that_collide(self):
+        from preprocess.svc.sidecar import duplicate_groups
+        rows = [{"video_id": "a", "title": "夜に駆ける"},
+                {"video_id": "b", "title": "夜に駆ける【歌ってみた】"},
+                {"video_id": "c", "title": "ドライフラワー"}]
+        groups = duplicate_groups(rows)
+        self.assertEqual(sorted(groups), ["夜に駆ける"])
+        self.assertEqual(sorted(groups["夜に駆ける"]), ["a", "b"])
+
+
+class MinBandwidthFromMelTests(unittest.TestCase):
+    """帯域の足切りは sample rate ではなく **mel の上位 bin の中心**から決める。
+
+    実測: MP3 由来の素材は lowpass が約 15.8 kHz で、16,000 Hz を閾値にすると 92% が
+    `band_limited` で弾かれるのに、mel では 1 bin も失われない。
+    """
+
+    def test_the_default_mel_gives_the_top_bin_centre(self):
+        from leapsinger.config import MelSpec
+        from preprocess.svc.sidecar import min_bandwidth_for_mel
+        self.assertAlmostEqual(min_bandwidth_for_mel(MelSpec()), 15540.0, delta=5.0)
+
+    def test_it_is_below_fmax(self):
+        from leapsinger.config import MelSpec
+        from preprocess.svc.sidecar import min_bandwidth_for_mel
+        mel = MelSpec()
+        self.assertLess(min_bandwidth_for_mel(mel), mel.fmax)
+
+    def test_a_lower_fmax_lowers_the_threshold(self):
+        from leapsinger.config import MelSpec
+        from preprocess.svc.sidecar import min_bandwidth_for_mel
+        self.assertLess(min_bandwidth_for_mel(MelSpec(fmax=8000.0)),
+                        min_bandwidth_for_mel(MelSpec()))
+
+    def test_audit_thresholds_use_the_derived_bandwidth(self):
+        from leapsinger.config import MelSpec
+        from preprocess.svc.sidecar import audit_thresholds_for_mel
+        th = audit_thresholds_for_mel(MelSpec())
+        self.assertAlmostEqual(th.min_bandwidth_hz, 15540.0, delta=5.0)
+
+    def test_audit_thresholds_keep_other_fields_overridable(self):
+        from leapsinger.config import MelSpec
+        from preprocess.svc.sidecar import audit_thresholds_for_mel
+        th = audit_thresholds_for_mel(MelSpec(), max_silence_ratio=0.9)
+        self.assertEqual(th.max_silence_ratio, 0.9)
