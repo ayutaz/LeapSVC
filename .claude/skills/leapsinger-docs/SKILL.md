@@ -23,6 +23,13 @@ description: doc/ 配下と README / CLAUDE.md を更新するときの作法。
 **迷ったら弱いほうを選ぶ。** 「確認済み」を付けるときは、根拠（コマンド、出力、ファイルパス、
 コミット）を同じ段落に書く。
 
+**ライセンスは「その license が掛かっているファイル」で確認すること。** Zenodo の record
+`10265401` は `license: cc-by-4.0` / `open` ですが、**中身は論文 PDF 1 本だけ**で、
+データセット本体（SingStyle111）には及びません（`https://zenodo.org/api/records/<id>` で
+ファイル一覧が出ます）。**landing page が論文 record を兼ねている例は珍しくありません。**
+再配布物（HF の dataset card など）の宣言も、**上流の適法性を保証しません** ――
+「宣言がある」を「確認済み」と書かないこと。
+
 ## 2. 主張の範囲（[`doc/svc-prior-art-license.md`](../../../doc/svc-prior-art-license.md) 6 節）
 
 - 「Seed-VC より良い」— 同一 test set の blind comparison の後だけ。

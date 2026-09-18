@@ -74,6 +74,7 @@ chunk 境界・audio I/O・連続運転を測っていないためです。**GPU
 | [先行研究・ライセンス・リスク](svc-prior-art-license.md) | 新規性の境界、ライセンス、技術・データ上のリスク |
 | [実装状況と再現手順](svc-implementation-status.md) | 現在のファイル、データ契約、実行例、検証済み/未検証境界 |
 | [データセット台帳](svc-dataset-ledger.md) | 既存 3 DB の権利条件（規約 URL と取得日つき）、SVC で新たに要るもの |
+| [商用リリースのデータ要件](commercial-release-data.md) | 商用可の素材の棚卸し、部品ごとの必要量、費用構造、権利の確定手順 |
 | [実行計画（マイルストーン）](svc-plan.md) | M0〜M6 の目的・ゴール・完了条件、条件付きトラック、進行ルール |
 | [content encoder の選定](svc-content-encoder.md) | 候補一覧とライセンス、Interspeech 2025 の比較実証、先行実装の採用状況 |
 | [出典一覧](svc-sources.md) | 一次資料、ローカル根拠、調査時点 |
