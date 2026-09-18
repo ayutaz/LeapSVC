@@ -720,3 +720,55 @@ class GTSingerPickWavsTests(unittest.TestCase):
         from tools.m3_corpus import pick_wavs
         self.assertEqual(pick_wavs(self._files(), ["Japanese"], 7),
                          pick_wavs(self._files(), ["Japanese"], 7))
+
+
+class NhvIndistExtraSetTests(unittest.TestCase):
+    """`tools/nhv_indist.py` に任意のコーパスを足す（doc/svc-plan.md 12 節 P0-3）。
+
+    既存 5 セットはモジュール定数で、**新しい素材を並べる口がありませんでした**。
+    7b 節と同一条件で比べるために、セットだけを足せるようにします。
+    """
+
+    def _parse(self, values):
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "nhv_indist", Path(__file__).resolve().parent / "tools" / "nhv_indist.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.parse_extra_sets(values)
+
+    def test_name_and_path_are_parsed(self):
+        sets = self._parse(["tts=.m0data/p0/vocal"])
+        self.assertEqual(len(sets), 1)
+        name, rel, in_nhv, note = sets[0]
+        self.assertEqual(name, "tts")
+        self.assertEqual(rel, ".m0data/p0/vocal")
+
+    def test_an_extra_set_is_never_marked_as_nhvsing_training_data(self):
+        """既知/未知の列は**素材の事実**なので、足した側が勝手に「既知」を名乗らない。"""
+        _, _, in_nhv, _ = self._parse(["tts=.m0data/p0/vocal"])[0]
+        self.assertFalse(in_nhv)
+
+    def test_a_note_can_be_given(self):
+        _, _, _, note = self._parse(["tts=.m0data/p0/vocal=分離ボーカル"])[0]
+        self.assertEqual(note, "分離ボーカル")
+
+    def test_several_sets_are_parsed(self):
+        self.assertEqual(len(self._parse(["a=x", "b=y"])), 2)
+
+    def test_a_value_without_an_equals_sign_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._parse([".m0data/p0/vocal"])
+
+    def test_an_empty_name_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._parse(["=.m0data/p0/vocal"])
+
+    def test_a_name_colliding_with_a_default_set_is_rejected(self):
+        """既存セットを黙って置き換えると、7b 節の値と比較できなくなる。"""
+        with self.assertRaises(ValueError):
+            self._parse(["ritsu=.m0data/p0/vocal"])
+
+    def test_none_gives_no_sets(self):
+        self.assertEqual(self._parse(None), [])

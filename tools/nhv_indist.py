@@ -43,6 +43,35 @@ DEFAULT_SETS = [
 ]
 
 
+def parse_extra_sets(values: list[str] | None) -> list[tuple[str, str, bool, str]]:
+    """`--extra-set name=path[=note]` を `DEFAULT_SETS` と同じ形へ。
+
+    **既知/未知の列（3 番目）は常に `False`** にします。これは「NHVSing の学習に入って
+    いたか」という**素材の事実**であって、測る側が名乗るものではありません。
+
+    **既存セットと同じ名前は拒否します。** 黙って置き換えると
+    [台帳](../doc/svc-dataset-ledger.md) 7b 節の値と比較できなくなります。
+    """
+    out: list[tuple[str, str, bool, str]] = []
+    taken = {name for name, _, _, _ in DEFAULT_SETS}
+    for value in values or []:
+        name, sep, rest = str(value).partition("=")
+        if not sep:
+            raise ValueError(f"--extra-set は name=path の形で渡すこと: {value!r}")
+        name = name.strip()
+        if not name:
+            raise ValueError(f"--extra-set の名前が空: {value!r}")
+        if name in taken:
+            raise ValueError(f"--extra-set の名前が既存セットと衝突: {name!r}")
+        rel, _, note = rest.partition("=")
+        rel = rel.strip()
+        if not rel:
+            raise ValueError(f"--extra-set のパスが空: {value!r}")
+        taken.add(name)
+        out.append((name, rel, False, note.strip() or f"追加セット {name}"))
+    return out
+
+
 def load_mono(path: Path, sr: int) -> np.ndarray:
     import soundfile as sf
     from scipy.signal import resample_poly
@@ -121,6 +150,8 @@ def main() -> int:
     ap.add_argument("--device", default="cuda", help="RMVPE の device（推論のみ）")
     ap.add_argument("--vocoder", default="checkpoints/nhv_v3_1.onnx")
     ap.add_argument("--save-wav", type=int, default=2, help="各セットで残す試聴用 WAV の数")
+    ap.add_argument("--extra-set", action="append", default=None,
+                    help="name=path[=note] で比較セットを足す（7b 節と同一条件で並べる）")
     a = ap.parse_args()
 
     import soundfile as sf
@@ -146,7 +177,7 @@ def main() -> int:
                     "seed": a.seed, "vocoder": a.vocoder, "sets": {}}
     t0 = time.time()
 
-    for name, rel, in_nhv, note in DEFAULT_SETS:
+    for name, rel, in_nhv, note in DEFAULT_SETS + parse_extra_sets(a.extra_set):
         root = ROOT / rel
         if not root.exists():
             print(f"[skip] {name}: {rel} が無い", flush=True)
