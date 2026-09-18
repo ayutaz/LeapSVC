@@ -27,6 +27,7 @@
 | [`preprocess/svc/encoders.py`](../preprocess/svc/encoders.py) | 実装済み | ContentVec / RMVPE の薄い adapter。ここだけが重いモデルに触れる |
 | [`preprocess/svc/shard.py`](../preprocess/svc/shard.py) | 実装済み | M1 の 2 段目。`svc_shard.npz` を**決定的に**書く。`features_to_item()` |
 | [`preprocess/svc/run.py`](../preprocess/svc/run.py) | 実装済み | M1 の CLI。`--from-cache` で 2 段目だけ再実行 |
+| [`preprocess/svc/sidecar.py`](../preprocess/svc/sidecar.py) | 実装済み（**未接続**） | 12 節 P0-4。WebDataset の sidecar JSON から話者 id・曲名・帯域の足切りを決める。`run.py` からはまだ呼んでいない（P1 が起動したら繋ぐ）。**cover の自動グルーピングは未解決** |
 | [`tools/m2_verify.py`](../tools/m2_verify.py) | 追加済み | M2 の検証（長さ・F0 追従・V/UV・再現性を測る） |
 | [`tools/nhv_indist.py`](../tools/nhv_indist.py) | 追加済み | M0 ゴール 4。コーパスが NHVSing にとって in-distribution かを再合成忠実度で測る |
 | [`tools/m3_corpus.py`](../tools/m3_corpus.py) | 追加済み | M3 の素材。GTSinger 20 歌手 + 日本語 3 DB を**話者ごとに 1 shard**で用意し、config を書き出す |
