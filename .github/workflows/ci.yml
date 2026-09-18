@@ -2,8 +2,10 @@ name: CI
 
 # **学習は回しません。** 学習は vast.ai の Linux インスタンスで行うという決定
 # （CLAUDE.md）なので、CI が見るのは lint・単体テスト・lock・コマンド guard だけです。
-# 疎通確認（tools/smoke/run_smoke.py）はネットワークと事前学習モデルを要るので、
-# 手動の Smoke workflow に分けてあります。
+# **疎通確認（tools/smoke/run_smoke.py）は CI に入れていません。** ネットワークと
+# 事前学習モデル（ContentVec / RMVPE の自動ダウンロード）が要るので、CI に入れると
+# 外の調子で落ちるようになります。依存を変えた後・環境を移した後は、手元か
+# インスタンスで回してください（leapsinger-verify skill）。
 #
 # **単体テストだけ macOS で回します（理由を残します）。** pyproject は Linux / Windows の
 # torch を **CUDA index (cu130)** に固定していて、`uv.lock` 上の torch + nvidia wheel は
@@ -37,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
       # **`uv.lock` はコミット対象**（CLAUDE.md）。pyproject を触って lock を忘れると、
@@ -49,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
       # **torch を入れずに lint だけ回します。** 版は pyproject の pin から採るので、
@@ -66,7 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
       # guard は stdlib だけで動くので、プロジェクトを同期しません（torch が不要）。
@@ -78,7 +80,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.1.0
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
