@@ -448,6 +448,6 @@ The SVC path additionally uses:
 - ContentVec (MIT) — https://huggingface.co/lengyue233/content-vec-best
 - RMVPE — https://arxiv.org/abs/2306.15412 (weights fetched from lj1995/VoiceConversionWebUI; **license not verified**)
 - Tohoku Kiritan (©SSS; **unseen-speaker evaluation only** — not used for training) — https://zunko.jp/kiridev/login.php
-- No.7 (derived from the Kotori Koiwai singing database; songs belong to Kotori Koiwai, commercial use via the No.7 support committee; **unseen-speaker evaluation only** — not used for training) — https://voiceseven.com/
+- No.7 (derived from the Kotori Koiwai singing database; songs belong to Kotori Koiwai, commercial use via the No.7 production committee; **unseen-speaker evaluation only** — not used for training) — https://voiceseven.com/
 
 The distributed multi-speaker models display the credits above, following each database's terms. For Natsume Yuuri, we display **database production: アマノケイ / voice provider: 霧野蒼太**, and we bundle the "Terms of use for Natsume Yuuri's output audio" with the model distribution.
