@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 LeapSinger は歌声合成（SVS）用の音響モデルです。ランダムノイズではなく **F0 から作った「擬似 mel」（倍音インパルス＋白色ノイズ）を rectified flow の出発点 `x0`** にすることで、1 ステップ（`num_steps: 1`）で mel を生成します。mel → 波形は別リポジトリの NHVSing ボコーダーが担当します（SVS は `nhv_v3_2*.onnx`、**SVC は `nhv_v3_1*.onnx` 据え置き**。下の「既知の落とし穴」を参照）。
 
-現在のブランチ `feature/svc` では、既存 SVS を残したまま **歌声変換（SVC）経路**を追加中です。設計・調査ドキュメントは `doc/svc.md` が索引になっています（作業前に必ず読むこと）。
+**歌声変換（SVC）経路**は既存 SVS を残したまま `main` に入っています（2026-09-18 に `feature/svc` を merge して削除。それ以前の記述はこのブランチ名を指します）。設計・調査ドキュメントは `doc/svc.md` が索引になっています（作業前に必ず読むこと）。
 
 ```text
 SVS: 音素 + duration + F0        -> LeapSinger -> mel + F0 -> NHVSing -> WAV

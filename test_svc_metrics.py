@@ -1318,6 +1318,57 @@ class SvcGanSmokeTests(unittest.TestCase):
         self.assertRegex(src, r'\("svc-train-gan",\s*st_svc_train_gan')
 
 
+class VastBootstrapTargetTests(unittest.TestCase):
+    """bootstrap が指すリポジトリとブランチが、2 つのファイルで一致していること。
+
+    **実際に壊れました。** `feature/svc` を main へ merge して削除した日、
+    `tools/vast.py` の `BOOTSTRAP_URL` と `tools/vast_bootstrap.sh` の既定が
+    **どちらも消えたブランチと旧リポジトリ名を指したまま**残り、インスタンスの
+    立ち上げが失敗する状態になっていました。**同じ事実が 2 か所にあるので、
+    片方だけ直す事故も起きます。**
+    """
+
+    ROOT = Path(__file__).parent
+
+    def _url_target(self):
+        """`BOOTSTRAP_URL` から owner/repo/branch を取り出す。"""
+        import re
+
+        from tools.vast import BOOTSTRAP_URL
+        # **ブランチ名に `/` が入り得る**ので、`/tools/` までを branch として切る
+        # （`[^/]+` で採ると `feature/svc` が `feature` になり、検査が空振りします）。
+        m = re.match(r"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/(.+)/tools/",
+                     BOOTSTRAP_URL)
+        self.assertIsNotNone(m, f"raw URL の形が想定と違う: {BOOTSTRAP_URL}")
+        return m.group(1), m.group(2), m.group(3)
+
+    def _script_target(self):
+        """`vast_bootstrap.sh` の `REPO` / `BRANCH` の既定を取り出す。"""
+        import re
+        text = (self.ROOT / "tools/vast_bootstrap.sh").read_text(encoding="utf-8")
+        repo = re.search(r'^REPO="\$\{REPO:-https://github\.com/([^/]+)/([^.]+)\.git\}"',
+                         text, re.M)
+        branch = re.search(r'^BRANCH="\$\{BRANCH:-([^}]+)\}"', text, re.M)
+        self.assertIsNotNone(repo, "REPO の既定が読めない")
+        self.assertIsNotNone(branch, "BRANCH の既定が読めない")
+        return repo.group(1), repo.group(2), branch.group(1)
+
+    def test_the_two_files_agree_on_repository_and_branch(self):
+        self.assertEqual(self._url_target(), self._script_target())
+
+    def test_the_bootstrap_does_not_point_at_a_deleted_branch(self):
+        # `feature/svc` は 2026-09-18 に main へ merge して削除済み。
+        for owner, repo, branch in (self._url_target(), self._script_target()):
+            self.assertNotEqual(branch, "feature/svc",
+                                f"{owner}/{repo} の branch が削除済みを指している")
+
+    def test_the_bootstrap_points_at_the_current_repository_name(self):
+        # リポジトリは 2026-09-17 に LeapSinger -> LeapSVC へ改名した。
+        # **raw.githubusercontent.com は改名を追随しない**ので、旧名では 404 になる。
+        for owner, repo, _ in (self._url_target(), self._script_target()):
+            self.assertEqual(repo, "LeapSVC", f"{owner}/{repo} は旧リポジトリ名")
+
+
 class VastCliResolutionTests(unittest.TestCase):
     """vastai CLI の呼び出し方（M5 の GAN 実験の直前に踏んだ）。
 

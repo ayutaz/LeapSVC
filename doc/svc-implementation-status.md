@@ -2,7 +2,7 @@
 
 確認日: 2026-09-01
 
-対象ブランチ: `feature/svc`
+対象ブランチ: `main`（旧 `feature/svc`。2026-09-18 に merge して削除）
 
 ## 1. 現在の実装
 
@@ -514,6 +514,6 @@ top-level の `test_*.py` は `test_svc_model.py` / `test_svc_preprocess.py` /
 
 ## 7. ブランチと作業ツリー
 
-SVC 開発用ブランチ名は、単なる `svc` より目的が明確な `feature/svc` を採用しました。既存の未コミット変更を stash、restore、reset せず、そのまま保持して切り替える方針です。
+SVC 開発用ブランチ名は、単なる `svc` より目的が明確な `feature/svc` を採用しました（**2026-09-18 に `main` へ merge して削除**。fork の紐づけも外し、独立リポジトリにしました）。既存の未コミット変更を stash、restore、reset せず、そのまま保持して切り替える方針です。
 
 この文書の状態一覧は記録時点の snapshot です。最新の branch と dirty state は作業開始・終了時に `git status` と branch 名を再確認してください。

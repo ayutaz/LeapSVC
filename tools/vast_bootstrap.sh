@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# vast.ai (Linux) の新規インスタンスに LeapSinger の学習環境を作る。
+# vast.ai (Linux) の新規インスタンスに LeapSVC の学習環境を作る。
 #
 #   # インスタンス上で。リポジトリを clone するところから:
-#   curl -LsSf https://raw.githubusercontent.com/ayutaz/LeapSinger/feature/svc/tools/vast_bootstrap.sh | bash
+#   curl -LsSf https://raw.githubusercontent.com/ayutaz/LeapSVC/main/tools/vast_bootstrap.sh | bash
 #
 #   # すでにコードを置いてある場合はリポジトリ直下で:
 #   bash tools/vast_bootstrap.sh
 #
 # 環境変数:
-#   REPO    clone 元 (既定: https://github.com/ayutaz/LeapSinger.git)
-#   BRANCH  clone するブランチ (既定: feature/svc)
-#   DIR     clone 先 (既定: $HOME/LeapSinger)
+#   REPO    clone 元 (既定: https://github.com/ayutaz/LeapSVC.git)
+#   BRANCH  clone するブランチ (既定: main)
+#   DIR     clone 先 (既定: $HOME/LeapSVC)
 #   EXTRAS  uv sync に渡す extra (既定: "--extra train")
 #   RMVPE   1 なら RMVPE の重み(約181MB)も落とす。前処理を回すなら必要
+#
+# **リポジトリ名とブランチは tools/vast.py の BOOTSTRAP_URL と一致させること。**
+# 2026-09-17 に LeapSinger -> LeapSVC へ改名、2026-09-18 に feature/svc を main へ
+# merge して削除しました（raw.githubusercontent.com は改名を追随しません）。
 set -euo pipefail
 
-REPO="${REPO:-https://github.com/ayutaz/LeapSinger.git}"
-BRANCH="${BRANCH:-feature/svc}"
-DIR="${DIR:-$HOME/LeapSinger}"
+REPO="${REPO:-https://github.com/ayutaz/LeapSVC.git}"
+BRANCH="${BRANCH:-main}"
+DIR="${DIR:-$HOME/LeapSVC}"
 EXTRAS="${EXTRAS:---extra train}"
 RMVPE="${RMVPE:-0}"
 

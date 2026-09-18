@@ -23,7 +23,7 @@ API token は `.env`（`.gitignore` 対象）に置く。`tools/vast.py` が
 
 インスタンスは起動した瞬間から課金される。次は**借りる前に**終わらせておく。
 
-- コードを `origin/feature/svc` に push しておく（bootstrap が clone する）
+- コードを `origin/main` に push しておく（bootstrap が clone する）
 - config を決めておく（[leapsinger-experiment](../leapsinger-experiment/SKILL.md) の 1〜2）
 - データの転送手段を決めておく（shard をどうやってインスタンスへ置くか）
 - 手元で `uv run python tools/smoke/run_smoke.py --device cpu` を通しておく
@@ -107,7 +107,7 @@ uv run python tools/vast.py create <offer_id> --disk 60 --yes
 uv run python tools/vast.py instances          # ssh_host / ssh_port を控える
 ssh -i ~/.ssh/id_ed25519_vast -p <port> -o BatchMode=yes root@<host>
 ssh -i ~/.ssh/id_ed25519_vast -p <port> root@<host> 'bash -s' < local_script.sh
-scp -i ~/.ssh/id_ed25519_vast -P <port> root@<host>:/root/LeapSinger/log/... .
+scp -i ~/.ssh/id_ed25519_vast -P <port> root@<host>:/root/LeapSVC/log/... .
 ```
 
 **データはインスタンス上で作る。** 転送するより速く、M1 が Linux でも動くことの確認になります。
@@ -115,7 +115,7 @@ scp -i ~/.ssh/id_ed25519_vast -P <port> root@<host>:/root/LeapSinger/log/... .
 
 ```bash
 # インスタンス上で
-git fetch origin feature/svc && git reset --hard origin/feature/svc   # 手元の push を反映
+git fetch origin main && git reset --hard origin/main   # 手元の push を反映
 uv run python preprocess/download_scripts/download_ritsu.py --voice kire
 uv run python -m preprocess.svc.run --wav-dir download/ritsu --out data/x --device cuda
 ```
@@ -184,7 +184,7 @@ uv run python tools/smoke/run_smoke.py
 `uv.lock`、`nvidia-smi` の出力、生成サンプル。
 
 ```bash
-scp -i ~/.ssh/id_ed25519_vast -P <port> -r root@<host>:/root/LeapSinger/log/<run>/. ./out/
+scp -i ~/.ssh/id_ed25519_vast -P <port> -r root@<host>:/root/LeapSVC/log/<run>/. ./out/
 ```
 
 学習中も定期的に退避する。インスタンスは落ちることがある。

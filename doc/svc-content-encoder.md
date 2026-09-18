@@ -2,7 +2,7 @@
 
 調査日: 2026-08-30
 
-対象ブランチ: `feature/svc`
+対象ブランチ: `main`（旧 `feature/svc`。2026-09-18 に merge して削除）
 
 [SVC アーキテクチャ](svc-architecture.md) 3 節の「**未決:** 採用モデル、層、sampling rate、stride、
 正規化、mel grid への resampling 方法」を埋めるための調査。ライセンスと次元は Hugging Face の

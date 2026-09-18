@@ -40,8 +40,12 @@ KEY_NAMES = ("VAST_API_KEY", "VASTAI_API_KEY", "VAST_AI_API_KEY",
 # vast.ai 公式イメージ。cu130 の wheel を使うのでホスト CUDA も 13.0 系を選ぶ。
 # gcc を含むので Linux では torch.compile(inductor) が使える。
 DEFAULT_IMAGE = "vastai/base-image:cuda-13.0.3-auto"
-BOOTSTRAP_URL = ("https://raw.githubusercontent.com/ayutaz/LeapSinger/"
-                 "feature/svc/tools/vast_bootstrap.sh")
+# **raw.githubusercontent.com はリポジトリの改名を追随しません**（旧名は 404）。
+# 2026-09-17 に LeapSinger -> LeapSVC へ改名し、2026-09-18 に `feature/svc` を main へ
+# merge して削除しました。**この 2 つは `tools/vast_bootstrap.sh` の既定と一致させること**
+# （回帰テスト: `test_svc_metrics.VastBootstrapTargetTests`）。
+BOOTSTRAP_URL = ("https://raw.githubusercontent.com/ayutaz/LeapSVC/"
+                 "main/tools/vast_bootstrap.sh")
 
 
 def _parse_env(path: Path) -> dict:
