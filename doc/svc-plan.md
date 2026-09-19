@@ -3394,6 +3394,23 @@ base の学習量・**話者の既知性**のいずれでも動かず、動い�
 **最初に出す理由:** 返事待ちの日数が読めず、他の 3 件と並行できるため。**これを後回しにすると、
 測定が全部終わってから待つことになります。**
 
+**回答が来ない場合の既定（2026-09-20 追記。期限は利用者が変えてよい）:**
+**送付から 4 週間**で回答が無い素材は、**商用トラックから外して先へ進みます。**
+これを書いておかないと**無期限に待つ**ことになります。外しても影響は限定的です ――
+[データ要件](commercial-release-data.md) 4.1 節の 39 h のうち、**夏目悠李と御丹宮くるみは
+合計 2.6 h**、**SingVERSE を外しても約 21 h 残り**、現 base（23 話者・18 h）に並びます。
+**待つ価値が高いのは波音リツ（target）と RMVPE（同梱物）の 2 件だけ**で、
+**この 2 件が閉じれば S1 は始められます。**
+
+**送り先（2026-09-20 確認）:** 波音リツは `canon7373@gmail.com` / X `@canon_73` /
+[お問い合わせ](https://www.canon-voice.com/contact/)。RMVPE は
+[HF の配布元](https://huggingface.co/lj1995/VoiceConversionWebUI) の Discussions か
+[`Dream-High/RMVPE`](https://github.com/Dream-High/RMVPE) の Issues。SingVERSE は
+[HF dataset](https://huggingface.co/datasets/amphion/SingVERSE) の Discussions。
+No.7 は [voiceseven.com](https://voiceseven.com/) の「問い合わせはこちらから」
+（**アドレスはページに出ていません**）。**HF / GitHub の 2 件は公開のやり取りになります**が、
+記録が残るので権利の確認には向きます。
+
 ### P0-2 低音域の実測（仮説の検証）
 
 **目的:** 「YouTube 由来なら低音男声が入る」という仮説を、投入の前に検証する。
