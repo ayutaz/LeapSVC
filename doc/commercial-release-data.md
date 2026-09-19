@@ -175,8 +175,22 @@ RMVPE 重みの由来、SingVERSE の素材由来、CC BY-SA を base に入れ�
 **確認済み: VocalSet を base に入れると、未知 source の test set が無くなります。**
 いまは VocalSet を**学習に使わない**ことで汎化の過大評価を避けています（[台帳](svc-dataset-ledger.md)
 2 節）。商用可の素材が少ないため、**学習と評価で同じ素材を使いたくなる圧力がかかります**。
-**決定として先に置くべき配分:** VocalSet は**歌手で分割**（20 名を学習 14 / 評価 6 など）し、
-**同じ歌手を両側に置かない**。曲単位 split では足りません（話者が漏れます）。
+**決定（2026-09-20。S1 の前に確定させました）:** VocalSet の 20 名を**性別で層別して**
+**学習 14 / 評価 6** に分けます。**同じ歌手を両側に置きません**（曲単位 split では話者が漏ります）。
+
+**新しいコードは書いていません。** 既存の `preprocess/svc/split.py` の `split_by_group()` が
+**層別のラウンドロビン hold-out** に対応しているので、歌手を group、性別を strata として
+`seed=42 / eval_groups=0 / test_groups=6` で呼ぶだけです（`random.Random` なので
+バージョンを越えて再現します）。
+
+| | 歌手 |
+|---|---|
+| **評価（未知 source）6 名** | `female1` / `female2` / `female6` / `male7` / `male9` / `male10`（**女 3 / 男 3**） |
+| **学習（base）14 名** | `female3` `female4` `female5` `female7` `female8` `female9` / `male1` `male2` `male3` `male4` `male5` `male6` `male8` `male11`（女 6 / 男 8） |
+
+**性別で層別する理由:** 男声が評価から消えると、**いちばん弱い条件（低音の source）を
+測れなくなります**。実測で「必要な移調量は source の F0 に依る」と分かっているので、
+評価側に男声を必ず残します。
 
 **要確認（SingVERSE）:** 「実環境の録音」と「スタジオ品質の clean 参照」の対になった
 enhancement 用ベンチマークです。**clean 側の素材がどこから来たか**を確認しないと、
