@@ -28,10 +28,11 @@
 MIT を宣言）は、**新たにデータを集めずに商用で使える見込み**です。**したがって新規に必要な
 データは「44.1 kHz 以上の歌唱」に限られます**（3 節）。
 
-**確認済み: いまの規模を権利クリーンに作り直すぶんなら、素材は足ります。** 商用利用可の歌唱は
-**約 39 時間 / 24 話者以上**を確認しました（4 節。うち「歌詞のある楽曲」は約 30 時間で、
-残りは VocalSet の音階・技法練習）。
-現在の base は **23 話者・約 18 時間**なので、**同等規模の再構築は素材の面では可能**です。
+**確認済み: いまの規模を権利クリーンに作り直すぶんなら、素材は足ります（2026-09-20 に実測）。**
+商用利用可の歌唱は **約 29.2 時間 / 40 話者**で、**由来に懸念のある SingVERSE を外しても
+20.1 時間 / 23 話者**です（4.1 節。時間は 2026-09-19 の見積もり 39 h から**減り**、
+話者数は 24 から**増えました**。訂正の内訳は同節）。現在の base は **23 話者・約 18 時間**
+なので、**同等規模の再構築は素材の面では可能**です。
 
 **確認済み: その先（品質を上げる）には足りません。** 明瞭度の律速は実測で**データの量と
 多様性**でした（[実行計画](svc-plan.md) M5、[CLAUDE.md](../CLAUDE.md) の落とし穴）。
@@ -124,14 +125,48 @@ RMVPE 重みの由来、SingVERSE の素材由来、CC BY-SA を base に入れ�
 時間と sample rate に「実測」と付けたものは、このリポジトリで取得して測った値
 （[台帳](svc-dataset-ledger.md) 4b 節）。
 
-| 素材 | 歌手 | 時間 | sample rate | ライセンス | 楽曲か | 商用 |
-|---|---:|---:|---|---|:-:|:-:|
-| [VocalSet](https://zenodo.org/records/1442513) | 20 | **8.73 h**（実測。公称 10.1） | **44,100**（実測） | **CC BY 4.0** | ✗ 音階・技法練習 | **可** |
-| [SingVERSE](https://huggingface.co/datasets/amphion/SingVERSE) | 不明 | **18.14 h** | 44,100 | **CC BY 4.0** | ○ | **可**（由来 要確認） |
-| 波音リツ 3 音源 | 1 | **10.41 h**（実測） | **44,100**（実測） | [サイト規約](https://www.canon-voice.com/terms/): 商用可・再配布可・クレジット不要 | ○ | **可**（機械学習は記載なし） |
-| [NIT-SONG070-F001](https://sinsy.sourceforge.net/readme_hts_voice_nitech_jp_song070_f001.php) | 1 | 約 1.2 h / 30–31 曲 | 48,000（要確認） | **CC BY 3.0**（HTS voice の readme。**生の DB 本体の条文は要確認**） | ○ 童謡 | **可** |
-| [PJS](https://sites.google.com/site/shinnosuketakamichi/research-topics/pjs_corpus) | 1 | 歌唱 100 本（1 h 未満と見込む） | 48,000 | **CC BY-SA 4.0**。"Free for non-commercial and commercial use" | ○ 自作曲 | **可**（SA） |
-| **合計** | **24+** | **約 39 h**（楽曲は約 30 h） | | | | |
+| 素材 | 歌手 | 時間 | sample rate | 実効帯域 p50 | ライセンス | 楽曲か |
+|---|---:|---:|---|---:|---|:-:|
+| [VocalSet](https://zenodo.org/records/1442513) | **20** | **8.73 h** | **44,100** | 15,996 Hz | **CC BY 4.0** | ✗ 音階・技法練習 |
+| [SingVERSE](https://huggingface.co/datasets/amphion/SingVERSE) | **17** | **9.07 h**（clean 側） | 44,100 | 未測定 | **CC BY 4.0**（**由来に具体的な懸念。下記**） | ○ |
+| 波音リツ 3 音源 | 1 | **10.41 h** | **44,100** | 22,026 Hz | [サイト規約](https://www.canon-voice.com/terms/): 商用可・再配布可・クレジット不要 | ○ |
+| [NIT-SONG070-F001](https://sinsy.sourceforge.net/readme_hts_voice_nitech_jp_song070_f001.php) | 1 | **0.526 h** / 31 本 | **48,000** | 17,364 Hz | **CC BY 3.0**（**DB 本体の `data/COPYING` で確認**） | ○ 童謡 |
+| [PJS](https://sites.google.com/site/shinnosuketakamichi/research-topics/pjs_corpus) | 1 | **0.448 h** / 100 本 | **48,000** | 23,880 Hz | **CC BY-SA 4.0**。"Free for non-commercial and commercial use" | ○ 自作曲 |
+| **合計** | **40** | **約 29.2 h** | | | | |
+| **SingVERSE を除いた合計** | **23** | **約 20.1 h** | | | | |
+
+**すべて実測です（2026-09-20）。** 時間・sample rate・実効帯域は取得して測った値で、
+生データは `.m0data/p0/nit_audit.json` / `.m0data/p0/pjs_audit.json` /
+`.m0data/p0/singverse_meta.json`（VocalSet と波音リツは[台帳](svc-dataset-ledger.md) 4b 節）。
+
+#### 訂正（2026-09-19 の版から 3 件）
+
+**黙って書き換えず、旧値と原因を並べます。**
+
+| 項目 | 旧値（2026-09-19） | 新値（実測） | 原因 |
+|---|---|---|---|
+| SingVERSE の時間 | 18.14 h | **9.07 h** | **dataset card の 18.14 h は clean と noisy の両側の合計**でした。card の scenario 別表を合計すると 32,656 秒 = 9.07 h で、本数 3,929（pro 1,847 / non_pro 2,082）も parquet の実測と一致します |
+| SingVERSE の歌手数 | 不明 | **17 名** | parquet の `singer` 列だけを読んで数えました（音声は落とさず、列射影のみ） |
+| NIT-SONG070 の時間 | 約 1.2 h（ACE 論文 Table 1） | **0.526 h** | raw（48 kHz / int16 / LE）31 本のバイト数から算出。**論文表の値より半分以下**です |
+| PJS の時間 | 1 h 未満と見込む | **0.448 h** | zip の `*_song.wav` 100 本を実測 |
+| 合計 | 約 39 h / 24 話者以上 | **約 29.2 h / 40 話者** | 上記の差分。**話者数は増え、時間は減りました** |
+
+**結論は生き残ります。** SingVERSE を外しても **20.1 h / 23 話者**で、現在の base
+（23 話者・約 18 h）とほぼ同じです。**同等規模の再構築は素材の面では可能**という 1 節の判断は
+変わりません。
+
+#### SingVERSE の由来に具体的な懸念が出ました（2026-09-20）
+
+**確認済み: `singer` 列に実在の商業アーティスト名が含まれます** ――
+`TaylorSwift`（51 本）/ `zhoujielun`（周杰倫、46）/ `chenyixun`（陳奕迅、83）/
+`dengziqi`（鄧紫棋、105）/ `zhangliangying`（張惠妹系、87）など。dataset card のファイル名例は
+**`chenyixun-burubujian-Concert-pro-part_0.wav`**（陳奕迅「不如不見」）で、clean 側は
+"studio-quality clean vocal reference" と説明されています。
+
+**仮説: clean 参照は市販音源に由来する可能性があります。** そうであれば **CC BY 4.0 の宣言が
+上流と整合しません**。**確認できるまで 4.1 節の合計に数えないほうが安全**です
+（上の表で「SingVERSE を除いた合計」を併記したのはこのためです）。
+**8 節 S0 の SingVERSE への問い合わせは、この 4 件の中で最も優先度が高い**と考えます。
 
 **確認済み: いまの base（23 話者・約 18 時間）と同程度の規模が、権利クリーンな素材だけで
 揃います。** ただし中身は違います。**日本語は波音リツ 1 名（10.41 h）と NIT-SONG070 1 名だけ**で、
