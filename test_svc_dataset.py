@@ -887,3 +887,43 @@ class P1CorpusBudgetStopTests(unittest.TestCase):
                     "dataset_category": "cover", "duration_sec": 240} for i in range(100)]
         got = mod.plan_selection(entries, hours=1.0, seed=0)
         self.assertEqual(len(got), 15)      # 240 s x 15 = 1.0 h
+
+
+class S1CorpusTests(unittest.TestCase):
+    """S1 の素材選定（doc/svc-plan.md 14 節）。**話者の取捨と評価曲の除外だけ**を契約にする。"""
+
+    def _mod(self):
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "s1_corpus", Path(__file__).resolve().parent / "tools" / "s1_corpus.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_only_the_registered_vocalset_speakers_are_used(self):
+        mod = self._mod()
+        self.assertEqual(len(mod.VOCALSET_TRAIN), 14)
+        self.assertTrue(mod.is_train_speaker("female3"))
+        self.assertTrue(mod.is_train_speaker("male11"))
+
+    def test_the_evaluation_speakers_are_excluded(self):
+        """台帳の split で評価側にした 6 名を学習へ入れない。"""
+        mod = self._mod()
+        for s in ("female1", "female2", "female6", "male7", "male9", "male10"):
+            self.assertFalse(mod.is_train_speaker(s), s)
+
+    def test_the_three_evaluation_songs_are_excluded(self):
+        mod = self._mod()
+        for song in ("anywhere-3_normal", "boukyakumoyou-3_normal", "skyhighblue-3_normal"):
+            self.assertTrue(mod.is_excluded_song(song), song)
+
+    def test_a_differently_cased_or_named_variant_is_also_excluded(self):
+        """`ritsu_soft` の `anywhere` のような別名版も落とす。"""
+        mod = self._mod()
+        self.assertTrue(mod.is_excluded_song("Anywhere"))
+        self.assertTrue(mod.is_excluded_song("SkyHighBlue-3_normal"))
+
+    def test_an_unrelated_song_is_kept(self):
+        mod = self._mod()
+        self.assertFalse(mod.is_excluded_song("1st_color+3_normal"))
