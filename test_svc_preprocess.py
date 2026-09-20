@@ -1253,7 +1253,7 @@ class SpeakersRootTests(unittest.TestCase):
                     chunk_sec=2.0, min_sec=1.0, min_voiced=0.0, content_model="fake",
                     layer=12, f0_min=65.0, f0_max=1100.0, device="cpu", limit=0,
                     song_parts=None, max_hours=0.0, verbose=False, wav_dir=None,
-                    speakers_root=str(self.root), drop_cache=False)
+                    speakers_root=str(self.root), drop_cache=False, resume=False)
         base.update(kw)
         return argparse.Namespace(**base)
 
@@ -1336,3 +1336,19 @@ class SpeakersRootTests(unittest.TestCase):
             run_mod.ContentVecEncoder, run_mod.RmvpeF0 = orig_enc, orig_f0
         self.assertEqual(len(out), 2)
         self.assertEqual(built, {"enc": 1, "f0": 1})
+
+    def test_a_speaker_with_no_usable_phrase_is_skipped_not_fatal(self):
+        """有声 chunk が 1 つも無い話者で**全体を落とさない**（2026-09-20 に実測で踏んだ）。
+
+        473 話者の 50 人目で `cache が空です` の `sys.exit` に当たり、そこまでの
+        49 話者ぶんが無駄になった。**1 件の欠けで全部が落ちるほうが困る。**
+        """
+        out = self._run(min_voiced=1.1)      # どの chunk も通らない閾値
+        self.assertEqual(out, [])
+
+    def test_resume_skips_speakers_that_already_have_a_shard(self):
+        first = self._run()
+        self.assertEqual(len(first), 2)
+        again = self._run(resume=True)
+        self.assertEqual([b["name"] for b in again], ["spk_a", "spk_b"])
+        self.assertTrue(all(b.get("resumed") for b in again))

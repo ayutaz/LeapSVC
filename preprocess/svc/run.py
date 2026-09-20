@@ -254,19 +254,36 @@ def run_speakers(args, mel: MelSpec, *, encoder=None, f0x=None) -> list[dict]:
     out_root = Path(args.out)
     built: list[dict] = []
     skipped: list[str] = []
+    empty: list[str] = []
     for d in dirs:
         if not any(d.rglob("*.wav")):
             skipped.append(d.name)
             continue
+        shard = out_root / d.name / "svc_shard.npz"
+        if getattr(args, "resume", False) and shard.exists():
+            built.append({"name": d.name, "spk_id": len(built), "dir": str(out_root / d.name),
+                          "n_phrases": None, "resumed": True})
+            continue
         sub = _argparse.Namespace(**{**vars(args), "wav_dir": str(d),
                                      "out": str(out_root / d.name), "cache": None})
         cache = stage_extract(sub, mel, encoder=encoder, f0x=f0x)
+        # **有声 chunk が 1 つも無い話者で全体を落とさない。** `stage_shard` は cache が
+        # 空だと `sys.exit` する。473 話者の 50 人目で当たり、そこまでが無駄になった
+        # （2026-09-20 実測）。**1 件の欠けで全部が落ちるほうが困る。**
+        if not any(cache.glob("*.npz")):
+            empty.append(d.name)
+            shutil.rmtree(cache, ignore_errors=True)
+            continue
         manifest = stage_shard(sub, mel, cache)
         if getattr(args, "drop_cache", False):
             shutil.rmtree(cache, ignore_errors=True)
         built.append({"name": d.name, "spk_id": len(built), "dir": str(out_root / d.name),
                       "n_phrases": manifest.get("n_phrases")})
         print(f"[speakers] {len(built)}/{len(dirs)} {d.name}", flush=True)
+
+    if empty:
+        print(f"[speakers] 有声 phrase が 0 だったので飛ばしました: {len(empty)} 件 "
+              f"({', '.join(empty[:5])}{' ...' if len(empty) > 5 else ''})", flush=True)
 
     if skipped:
         print(f"[speakers] WAV が無いので飛ばしました: {len(skipped)} 件 "
@@ -327,6 +344,9 @@ def main() -> None:
                     help="--speakers-root のとき、spk_map と n_speakers を埋めた config を書く")
     ap.add_argument("--base-config", default="configs/svc_base_multi.yaml",
                     help="--write-config の下敷きにする recipe")
+    ap.add_argument("--resume", action="store_true",
+                    help="--speakers-root のとき、shard が既にある話者を飛ばす。"
+                         "**落ちた後の再開用**（話者が 3 桁だと最初からやり直すのが高い）")
     ap.add_argument("--drop-cache", action="store_true",
                     help="shard を書いた後に _cache/ を消す。容量の大半は 768 次元の cache。"
                          "**--from-cache での再実行はできなくなる**")
