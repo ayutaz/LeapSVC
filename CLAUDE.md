@@ -97,7 +97,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **555 件**（`test_svc_model` 64 / `test_svc_preprocess` 135 / `test_svc_dataset` 100 / `test_svc_metrics` 256）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **563 件**（`test_svc_model` 64 / `test_svc_preprocess` 143 / `test_svc_dataset` 100 / `test_svc_metrics` 256）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -220,7 +220,7 @@ hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と 
 | `lock` | ubuntu | `uv lock --check`（**lock はコミット対象**なので、忘れを止める） |
 | `lint` | ubuntu | `uvx ruff@<pyproject の pin> check .`。**版は pyproject から採る**ので真実の在処が 1 つ |
 | `guard` | ubuntu | `tools/hooks/test_guard.py`（55 件）。stdlib だけなので `--no-project` |
-| `tests` | **macOS** | `uv sync --locked` + 単体テスト 555 件 + ruff + リンク検査 |
+| `tests` | **macOS** | `uv sync --locked` + 単体テスト 563 件 + ruff + リンク検査 |
 
 **単体テストを Linux で回していません（理由を残します）。** pyproject は Linux / Windows の
 torch を **CUDA index (cu130)** に固定していて、lock 上の torch + nvidia wheel は **4.23 GB**

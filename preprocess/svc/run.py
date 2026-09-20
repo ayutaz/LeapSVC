@@ -123,8 +123,13 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def stage_extract(args, mel: MelSpec) -> Path:
-    """1 段目。WAV -> `_cache/<phrase>.npz`。重いのでここだけ GPU を使う。"""
+def stage_extract(args, mel: MelSpec, *, encoder=None, f0x=None) -> Path:
+    """1 段目。WAV -> `_cache/<phrase>.npz`。重いのでここだけ GPU を使う。
+
+    **`encoder` / `f0x` を渡せます。** 話者が 3 桁になると、話者ごとに別プロセスで回すのは
+    現実的ではありません（ContentVec と RMVPE の読み込みが話者の数だけ載る）。
+    `run_speakers()` は 1 度だけ作って使い回します。渡さなければ従来どおり自分で作ります。
+    """
     import soundfile as sf
 
     wav_root = Path(args.wav_dir)
@@ -144,8 +149,10 @@ def stage_extract(args, mel: MelSpec) -> Path:
 
     cache = Path(args.cache or Path(args.out) / "_cache")
     cache.mkdir(parents=True, exist_ok=True)
-    encoder = ContentVecEncoder(args.content_model, layer=args.layer, device=args.device)
-    f0x = RmvpeF0(f0_min=args.f0_min, f0_max=args.f0_max, device=args.device)
+    if encoder is None:
+        encoder = ContentVecEncoder(args.content_model, layer=args.layer, device=args.device)
+    if f0x is None:
+        f0x = RmvpeF0(f0_min=args.f0_min, f0_max=args.f0_max, device=args.device)
 
     sources: dict[str, str] = {}
     counters: dict[str, int] = {}          # 曲ごとの通し番号。ファイルをまたいで続ける
@@ -216,6 +223,69 @@ def stage_shard(args, mel: MelSpec, cache: Path) -> dict:
     return manifest
 
 
+def run_speakers(args, mel: MelSpec, *, encoder=None, f0x=None) -> list[dict]:
+    """`--speakers-root` の直下の各ディレクトリを **1 話者 1 shard** として書く。
+
+    **重いモデルは 1 度だけ作って使い回します**（話者ごとに別プロセスで回すと、
+    ContentVec と RMVPE の読み込みが話者の数だけ載る。P1 は話者が 3 桁になる）。
+
+    **WAV が無いディレクトリは飛ばします**（止めません）。話者が多いと、1 つの欠けで
+    全体が落ちるほうが困るためです。飛ばしたものは戻り値に入りません。
+
+    `--drop-cache` を付けると shard を書いた後に `_cache/` を消します。cache は
+    **768 次元のまま**なので容量の大半を占めます（実測で shard 全体が約 1.6 GB/audio-hour）。
+    **`--from-cache` での再実行はできなくなります。**
+    """
+    import argparse as _argparse
+    import shutil
+
+    root = Path(args.speakers_root)
+    dirs = sorted(p for p in root.iterdir() if p.is_dir())
+    if not dirs:
+        sys.exit(f"話者ディレクトリが見つかりません: {root}")
+
+    out_root = Path(args.out)
+    built: list[dict] = []
+    skipped: list[str] = []
+    for d in dirs:
+        if not any(d.rglob("*.wav")):
+            skipped.append(d.name)
+            continue
+        sub = _argparse.Namespace(**{**vars(args), "wav_dir": str(d),
+                                     "out": str(out_root / d.name), "cache": None})
+        cache = stage_extract(sub, mel, encoder=encoder, f0x=f0x)
+        manifest = stage_shard(sub, mel, cache)
+        if getattr(args, "drop_cache", False):
+            shutil.rmtree(cache, ignore_errors=True)
+        built.append({"name": d.name, "spk_id": len(built), "dir": str(out_root / d.name),
+                      "n_phrases": manifest.get("n_phrases")})
+        print(f"[speakers] {len(built)}/{len(dirs)} {d.name}", flush=True)
+
+    if skipped:
+        print(f"[speakers] WAV が無いので飛ばしました: {len(skipped)} 件 "
+              f"({', '.join(skipped[:5])}{' ...' if len(skipped) > 5 else ''})", flush=True)
+    return built
+
+
+def write_run_config(built: list[dict], path: Path, base: Path) -> None:
+    """`run_speakers()` の戻り値から、この run の config を書く。
+
+    **`spk_map` と `n_speakers` は素材で決まる**ので recipe には書かれていません
+    （`configs/svc_base_multi.yaml` の注記）。`built` は**実際に shard ができた話者だけ**
+    なので、`spk_id` に穴は空きません。
+    """
+    import yaml
+    if not built:
+        sys.exit("shard が 1 つも無いので config を書けません")
+    cfg = yaml.safe_load(Path(base).read_text(encoding="utf-8"))
+    cfg["data"]["spk_map"] = {b["name"]: b["spk_id"] for b in built}
+    cfg["model"]["n_speakers"] = len(built)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    print(f"[config] {len(built)} speakers -> {path}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -243,11 +313,29 @@ def main() -> None:
     ap.add_argument("--max-hours", type=float, default=0.0,
                     help="この歌手から使う音声の上限（時間）。曲をまたいで均等に選ぶ")
     ap.add_argument("--verbose", action="store_true", help="ファイルごとの内訳を必ず出す")
+    ap.add_argument("--speakers-root", default=None,
+                    help="直下の各ディレクトリを 1 話者として、まとめて shard を書く。"
+                         "**重いモデルは 1 度だけ読み込む**（P1 は話者が 3 桁になる）")
+    ap.add_argument("--write-config", default=None,
+                    help="--speakers-root のとき、spk_map と n_speakers を埋めた config を書く")
+    ap.add_argument("--base-config", default="configs/svc_base_multi.yaml",
+                    help="--write-config の下敷きにする recipe")
+    ap.add_argument("--drop-cache", action="store_true",
+                    help="shard を書いた後に _cache/ を消す。容量の大半は 768 次元の cache。"
+                         "**--from-cache での再実行はできなくなる**")
     args = ap.parse_args()
     args.song_parts = (tuple(int(x) for x in args.song_parts.split(","))
                        if args.song_parts else None)
 
     mel = MelSpec()
+    if args.speakers_root:
+        built = run_speakers(args, mel)
+        print(f"[speakers] {len(built)} 話者 -> {args.out}")
+        print("  data_dirs: " + " ".join(b["dir"] for b in built[:8])
+              + (" ..." if len(built) > 8 else ""))
+        if args.write_config:
+            write_run_config(built, Path(args.write_config), Path(args.base_config))
+        return
     if args.from_cache:
         stage_shard(args, mel, Path(args.from_cache))
         return

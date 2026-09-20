@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 
 from leapsinger.config import MelSpec
 from leapsinger.mel import wav_to_mel_nhv
@@ -1199,3 +1200,111 @@ class SidecarSongKeyRealTitleTests(unittest.TestCase):
     def test_a_slash_separated_title_keeps_the_head(self):
         from preprocess.svc.sidecar import song_key
         self.assertEqual(song_key({"title": "水平線／歌ってみた"}), "水平線")
+
+
+class SpeakersRootTests(unittest.TestCase):
+    """話者ごとのディレクトリをまとめて 1 プロセスで shard にする（doc/svc-plan.md 13 節 P1）。
+
+    **話者が 3 桁になると、話者ごとに別プロセスで回すのは現実的ではありません** ――
+    ContentVec と RMVPE の読み込みが話者の数だけ載ります。重いモデルは**注入**できるように
+    して、ここではテストから偽物を渡します。
+    """
+
+    MEL = MelSpec()
+    C_IN = 16
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name) / "wavs"
+        self.out = Path(self.tmp.name) / "data"
+        for spk in ("spk_a", "spk_b"):
+            d = self.root / spk / "song1"
+            d.mkdir(parents=True)
+            sf.write(d / "0000.wav", self._wav(), self.MEL.sr)
+        (self.root / "empty").mkdir(parents=True)     # wav が無い話者
+        self.addCleanup(self.tmp.cleanup)
+
+    def _wav(self, seconds=3.0):
+        t = np.arange(int(self.MEL.sr * seconds), dtype=np.float32) / self.MEL.sr
+        return (0.2 * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+
+    def _fakes(self):
+        class Enc:
+            def __call__(self, wav16, sr):
+                frames = max(1, len(wav16) // 320)
+                return np.tile(np.arange(frames, dtype=np.float32)[:, None], (1, 16))
+
+            def manifest(self):
+                return {"content_encoder": "fake"}
+
+        class F0:
+            def __call__(self, wav, sr, hop):
+                n = wav_to_mel_nhv(wav, sr=sr, n_fft=2048, hop=hop, win=2048,
+                                   n_mels=128, fmin=40.0, fmax=16000.0).shape[1]
+                return np.full(n, 220.0, np.float32), np.ones(n, np.float32)
+
+            def manifest(self):
+                return {"f0_extractor": "fake"}
+        return Enc(), F0()
+
+    def _args(self, **kw):
+        import argparse
+        base = dict(out=str(self.out), cache=None, from_cache=None, n_dims=8, subset_seed=0,
+                    chunk_sec=2.0, min_sec=1.0, min_voiced=0.0, content_model="fake",
+                    layer=12, f0_min=65.0, f0_max=1100.0, device="cpu", limit=0,
+                    song_parts=None, max_hours=0.0, verbose=False, wav_dir=None,
+                    speakers_root=str(self.root), drop_cache=False)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def _run(self, **kw):
+        from preprocess.svc.run import run_speakers
+        enc, f0 = self._fakes()
+        return run_speakers(self._args(**kw), self.MEL, encoder=enc, f0x=f0)
+
+    def test_one_shard_per_speaker_directory(self):
+        built = self._run()
+        self.assertEqual(sorted(b["name"] for b in built), ["spk_a", "spk_b"])
+        for name in ("spk_a", "spk_b"):
+            self.assertTrue((self.out / name / "svc_shard.npz").exists(), name)
+            self.assertTrue((self.out / name / "metadata.json").exists(), name)
+
+    def test_a_directory_without_wav_is_skipped_not_fatal(self):
+        built = self._run()
+        self.assertNotIn("empty", [b["name"] for b in built])
+
+    def test_speaker_ids_are_assigned_in_sorted_order(self):
+        built = self._run()
+        self.assertEqual({b["name"]: b["spk_id"] for b in built}, {"spk_a": 0, "spk_b": 1})
+
+    def test_drop_cache_removes_the_intermediate_npz(self):
+        self._run(drop_cache=True)
+        self.assertFalse((self.out / "spk_a" / "_cache").exists())
+
+    def test_the_cache_is_kept_by_default(self):
+        self._run()
+        self.assertTrue((self.out / "spk_a" / "_cache").exists())
+
+    def test_the_injected_encoder_is_used(self):
+        """注入した偽 encoder が使われていれば、本物を読まずに shard ができる。"""
+        built = self._run()
+        meta = json.loads((self.out / built[0]["name"] / "metadata.json").read_text("utf-8"))
+        self.assertEqual(meta["content_dim"], 8)
+
+    def test_write_config_fills_spk_map_and_n_speakers(self):
+        import yaml
+
+        from preprocess.svc.run import write_run_config
+        built = self._run()
+        base = Path("configs/svc_base_multi.yaml")
+        out = Path(self.tmp.name) / "run.yaml"
+        write_run_config(built, out, base)
+        cfg = yaml.safe_load(out.read_text("utf-8"))
+        self.assertEqual(cfg["data"]["spk_map"], {"spk_a": 0, "spk_b": 1})
+        self.assertEqual(cfg["model"]["n_speakers"], 2)
+
+    def test_write_config_refuses_an_empty_build(self):
+        from preprocess.svc.run import write_run_config
+        with self.assertRaises(SystemExit):
+            write_run_config([], Path(self.tmp.name) / "x.yaml",
+                             Path("configs/svc_base_multi.yaml"))
