@@ -54,6 +54,7 @@ description: doc/ 配下と README / CLAUDE.md を更新するときの作法。
 | 作業手順で分かったこと | 該当する skill（[verify](../leapsinger-verify/SKILL.md) / [experiment](../leapsinger-experiment/SKILL.md) / [tdd](../leapsinger-tdd/SKILL.md) / [vast](../vast-instance/SKILL.md)）。**文書に書いただけでは次の作業で読まれない** |
 | 「常に間違い」なコマンドが判明 | `tools/hooks/guard_commands.py` にルール、`tools/hooks/test_guard.py` に**止めるケースと通すケースの両方**、CLAUDE.md の hook 一覧 |
 | テスト件数・ステージ数 | CLAUDE.md / status / tdd skill。**数えずに書かない** |
+| **事前登録したゲートを利用者の判断で解除した** | 解除の事実を**日付と理由つき**で足す。**判定そのものは書き換えない**（解除したのは中止条件であって測定結果ではない）。**期待値も書き直さない** —— 不合格と測れた取り柄は落としたまま進める |
 | **過去に載せた数値が誤りと分かった** | 訂正節を足し、**旧値と新値と原因を並べる**。summary 文書（README / svc.md / CLAUDE.md）の headline は新値へ差し替え、経過を書いた節には**印を付けて残す**。**黙って書き換えない** ―― 何が壊れていたかが次の防止策になる |
 | 同じ量の測定値が 2 つあって食い違う | **どちらかが壊れています。** 両方載せたまま先へ進まない（実際に 0.5676 と 0.4910 を並べたまま結論を書いた） |
 | 測っていない軸が見つかった | [`svc-evaluation.md`](../../../doc/svc-evaluation.md) の客観指標表と、該当マイルストーンの進捗節。**「その指標では検知できない」ことも書く** |

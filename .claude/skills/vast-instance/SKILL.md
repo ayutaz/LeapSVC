@@ -101,6 +101,21 @@ uv run python tools/vast.py create <offer_id> --disk 60 --yes
 | **素材はインスタンスと一緒に消える** | M3 の shard 29 GB は `destroy` で消えた。学習を継続するには**素材の再生成（実測 約 65 分）と checkpoint の再アップロードが要る**。「学習だけ 1 時間」で見積もると外す |
 | HF の取得速度は回線ではなく**先方の律速**で決まる | 7.4 Gbps の offer でも 7,977 ファイルに 20 分以上かかった（前回は 900 Mbps の offer で 9 分）。回線速度で選んでも縮まないことがある |
 
+### 3d. P1 で追加で踏んだこと（2026-09-20）
+
+| 事象 | 対処 |
+|---|---|
+| **`create` の料金プレビューはやはり空**（`offer 51030538: ? x? VRAM 0GB`） | **実効料金は作成後の `instances` に出ます**（今回 offer $0.081 + disk 120 GB で **$0.1133/hr**）。検索一覧の `$/hr` に disk ぶんを足した額だと思っておく |
+| bootstrap が clone するのは **`main`** | 作業ブランチで動かすなら、**借りる前に push** して、インスタンス上で `git fetch origin <branch> && git checkout -B <name> origin/<branch>` → **`uv sync` をやり直す**（依存が変わっていることがある） |
+| **gated な HF データセットはインスタンスから落とせない** | 手元の token ファイルを **scp で渡す**。**値を表示しないこと**: `scp ~/.cache/huggingface/token root@host:/root/.cache/huggingface/token` の後に `chmod 600`。`huggingface_hub.get_token()` がこの場所を読む |
+| 比較相手の checkpoint が**手元に無いと A/B が組めない** | **借りる前に確かめる。** 今回は `.m0data/m3c/ckpt_060000.pt`（141 MB）と `out/m5/where_base60000/`（上限つき 6 clip）が残っていたので成立した。**残っていなければ比較相手も学習し直しになり、費用が倍**になる |
+| 素材の取得は**GPU を使わない**のに課金は同じ | 取得と抽出を**並行させる**。今回は cover の streaming 中に別セッションでリツを取得した |
+
+**借りる前のチェックに 1 行足す:** **「評価に使う `--spk-id` と hold-out 曲が、新しい素材で
+成立するか」**（[leapsinger-experiment](../leapsinger-experiment/SKILL.md) 6d 節）。
+**これは手元で確かめられます。** 今回は学習を始める前に気づけましたが、
+**気づかなければ 4 時間ぶん課金してから比較できないと分かる**ところでした。
+
 **接続:**
 
 ```bash
