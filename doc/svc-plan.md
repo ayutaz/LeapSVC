@@ -3722,6 +3722,13 @@ P0-3 が言っているのは「**学習素材の mel 分布が既存素材と�
 上限つき、`ceiling_comparable: true`、`num_steps 16` / `spk_id 22` / CPU）と
 checkpoint `.m0data/m3c/ckpt_060000.pt`。**上限は `--ceiling-from` で使い回します。**
 
+**評価曲を学習から外しました（2026-09-20、学習の前）。** 比較に使う 3 曲
+（`anywhere-3_normal` / `boukyakumoyou-3_normal` / `skyhighblue-3_normal`）は
+**現 base の学習 hold-out** です。**p1 の corpus にそのまま入れると「学習した曲」を測ることに
+なり、比較が壊れます** ―― 実測で**学習曲は上限との差 +1.0 点、未知曲は +12.4 点**と桁が違います。
+リツを配置するときに **3 曲 × 3 音源 = 9 曲を除外**しました（141 曲を投入）。
+**除外は名前一致で行い、`ritsu_soft` の `anywhere` のような別名版も落としています。**
+
 ### 指標と、なぜそれを選ぶか
 
 **評価 test set は従来どおり**（リツの hold-out 6 clip と VocalSet の未知 source）。
