@@ -48,6 +48,22 @@ def is_train_speaker(name: str) -> bool:
     return str(name).strip().casefold() in {s.casefold() for s in VOCALSET_TRAIN}
 
 
+def is_audio_member(name: str) -> bool:
+    """zip の entry が本物の WAV か。
+
+    **拡張子だけで拾わないこと。** VocalSet の zip には macOS のリソースフォーク
+    （`._f3_long_trill_i.wav`）と `__MACOSX/` が入っており、拡張子は `.wav` でも音声では
+    ありません。実測（2026-09-20）で `LibsndfileError: Format not recognised` を起こし、
+    shard 化が 3 話者目で止まりました。
+    """
+    n = str(name)
+    if not n.lower().endswith(".wav"):
+        return False
+    if n.startswith("__MACOSX/") or "/__MACOSX/" in n:
+        return False
+    return not Path(n).name.startswith("._")
+
+
 def is_excluded_song(name: str) -> bool:
     """比較に使う曲なら True（学習へ入れない）。"""
     low = str(name).casefold()
@@ -93,7 +109,7 @@ def build(out: Path, work: Path) -> dict:
     pat = re.compile(r"/((?:male|female)\d+)/")
     n_v = 0
     for name in z.namelist():
-        if not name.lower().endswith(".wav"):
+        if not is_audio_member(name):
             continue
         m = pat.search(name)
         if not m or not is_train_speaker(m.group(1)):

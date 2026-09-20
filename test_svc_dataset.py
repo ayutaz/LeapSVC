@@ -927,3 +927,20 @@ class S1CorpusTests(unittest.TestCase):
     def test_an_unrelated_song_is_kept(self):
         mod = self._mod()
         self.assertFalse(mod.is_excluded_song("1st_color+3_normal"))
+
+    def test_macos_resource_forks_are_not_treated_as_audio(self):
+        """VocalSet の zip には `._*.wav`（リソースフォーク）が入っている。
+
+        実測（2026-09-20）: 拡張子だけで拾ったため `._f3_long_trill_i.wav` を
+        音声として開こうとし、`LibsndfileError: Format not recognised` で
+        shard 化が止まった。
+        """
+        mod = self._mod()
+        self.assertFalse(mod.is_audio_member("FULL/female3/trill/._f3_long_trill_i.wav"))
+        self.assertFalse(mod.is_audio_member("__MACOSX/FULL/female3/._x.wav"))
+        self.assertTrue(mod.is_audio_member("FULL/female3/trill/f3_long_trill_i.wav"))
+
+    def test_non_wav_entries_are_not_audio(self):
+        mod = self._mod()
+        self.assertFalse(mod.is_audio_member("FULL/female3/.DS_Store"))
+        self.assertFalse(mod.is_audio_member("FULL/"))
