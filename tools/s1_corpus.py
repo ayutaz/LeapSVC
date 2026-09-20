@@ -71,11 +71,11 @@ def fetch(work: Path) -> None:
     if not (work / "HTS-demo_NIT-SONG070-F001").exists():
         _run(["tar", "-xjf", str(nt), "-C", str(work),
               "HTS-demo_NIT-SONG070-F001/data/raw"])
+    # **スクリプトとして呼ぶこと。** `-m` や `runpy.run_path` だと兄弟の `_gdrive` が
+    # 解決できず必ず失敗します（CLAUDE.md の落とし穴。2026-09-20 に runpy で再現した）。
+    script = ROOT / "preprocess/download_scripts/download_ritsu.py"
     for voice in ("kire", "normal", "soft"):
-        code = ("import runpy,sys; sys.argv=['x','--voice','{v}']; "
-                "runpy.run_path('preprocess/download_scripts/download_ritsu.py',"
-                "run_name='__main__')").format(v=voice)
-        _run([sys.executable, "-c", code], cwd=str(ROOT))
+        _run([sys.executable, str(script), "--voice", voice], cwd=str(ROOT))
 
 
 def build(out: Path, work: Path) -> dict:
