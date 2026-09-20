@@ -30,6 +30,7 @@
 | [`preprocess/svc/sidecar.py`](../preprocess/svc/sidecar.py) | 実装済み（**未接続**） | 12 節 P0-4。WebDataset の sidecar JSON から話者 id・曲名・帯域の足切りを決める。`run.py` からはまだ呼んでいない（P1 が起動したら繋ぐ）。**cover の自動グルーピングは未解決** |
 | [`tools/m2_verify.py`](../tools/m2_verify.py) | 追加済み | M2 の検証（長さ・F0 追従・V/UV・再現性を測る） |
 | [`tools/nhv_indist.py`](../tools/nhv_indist.py) | 追加済み | M0 ゴール 4。コーパスが NHVSing にとって in-distribution かを再合成忠実度で測る |
+| [`tools/p1_corpus.py`](../tools/p1_corpus.py) | 追加済み | 13 節 P1 の素材。`tts-dataset` の tar を**逐次読み**して `cover` だけを話者ごとのディレクトリへ。**インスタンス上で実行する**（通信量が tar の全長かかる） |
 | [`tools/m3_corpus.py`](../tools/m3_corpus.py) | 追加済み | M3 の素材。GTSinger 20 歌手 + 日本語 3 DB を**話者ごとに 1 shard**で用意し、config を書き出す |
 | [`tools/m3_verify.py`](../tools/m3_verify.py) | 追加済み | M3 ゴール 3。未知 source の内容保持を content cos で測る（上限・下限つき）＋ 音の明るさ |
 | [`tools/svc_convert.py`](../tools/svc_convert.py) | 追加済み | 任意の WAV を学習済みモデルで変換する CLI。`--self-check` でボコーダー由来の劣化を分離、`--match-loudness` で入力を学習分布へ寄せる |
@@ -176,7 +177,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 ### 確認済み
 
 - ボコーダーは **NHVSing V3.1**（`checkpoints/nhv_v3_1.onnx`。2026-09-13 に上流から取り込み）。**M5 の測定値は V3 で取ったもの**なので、V3.1 で測り直した値と混ぜないこと。**2026-09-18 に上流の V3.2 を取り込みましたが、SVC の既定は V3.1 据え置きです（実測で決定）** — 26 clip を CPU で 3 run 回し（V3.1 を 2 回 + V3.2、mel は bit 一致）、**音量の揺れは改善しませんでした**（改善側が過半になった量は無く、上限の `frame_jitter_db` は 6/26・p = 0.0094 で有意に悪化。ただし +0.035 dB で無視できる大きさ）。**「聴取で報告された『音量が揺れる』を V3.2 が直す」という仮説は支持されませんでした。** 一次データ `out/m5/_v32/loudness_compare.json`、判定規則は [実行計画](svc-plan.md) 10 節。
-- 自動テスト **545 件**が成功（`test_svc_model` 64 / `test_svc_preprocess` 135 / `test_svc_dataset` 90 / `test_svc_metrics` 256）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **555 件**が成功（`test_svc_model` 64 / `test_svc_preprocess` 135 / `test_svc_dataset` 100 / `test_svc_metrics` 256）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **55 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。

@@ -772,3 +772,76 @@ class NhvIndistExtraSetTests(unittest.TestCase):
 
     def test_none_gives_no_sets(self):
         self.assertEqual(self._parse(None), [])
+
+
+class P1CorpusSelectionTests(unittest.TestCase):
+    """1,000 h 素材から base 用の話者を選ぶ（doc/svc-plan.md 13 節 P1）。
+
+    **話者を稼ぐのが目的**なので、同じ channel から何曲も取らない。`official` は
+    channel = 話者にならない（`Warner Music Japan` が実在）ので除く。
+    """
+
+    def _entries(self, n=10, cat="cover", sec=240):
+        return [{"video_id": f"v{i}", "channel_id": f"c{i}",
+                 "dataset_category": cat, "duration_sec": sec} for i in range(n)]
+
+    def _plan(self, entries, **kw):
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "p1_corpus", Path(__file__).resolve().parent / "tools" / "p1_corpus.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.plan_selection(entries, **kw)
+
+    def test_only_cover_is_selected(self):
+        mixed = self._entries(3, "cover") + self._entries(3, "official") + self._entries(3, "diverse")
+        got = self._plan(mixed, hours=10.0, seed=0)
+        self.assertTrue(all(e["dataset_category"] == "cover" for e in got))
+
+    def test_an_entry_without_a_channel_is_dropped(self):
+        entries = self._entries(2)
+        entries[0]["channel_id"] = ""
+        got = self._plan(entries, hours=10.0, seed=0)
+        self.assertEqual([e["video_id"] for e in got], ["v1"])
+
+    def test_the_hour_budget_stops_the_selection(self):
+        got = self._plan(self._entries(100, sec=360), hours=1.0, seed=0)
+        self.assertEqual(len(got), 10)          # 360 s x 10 = 1.0 h
+
+    def test_one_song_per_speaker_by_default(self):
+        entries = [{"video_id": f"v{i}", "channel_id": "same",
+                    "dataset_category": "cover", "duration_sec": 240} for i in range(5)]
+        got = self._plan(entries, hours=10.0, seed=0)
+        self.assertEqual(len(got), 1)
+
+    def test_per_speaker_cap_can_be_raised(self):
+        entries = [{"video_id": f"v{i}", "channel_id": "same",
+                    "dataset_category": "cover", "duration_sec": 240} for i in range(5)]
+        got = self._plan(entries, hours=10.0, seed=0, per_speaker=3)
+        self.assertEqual(len(got), 3)
+
+    def test_the_same_seed_reproduces_the_selection(self):
+        entries = self._entries(50)
+        a = self._plan(entries, hours=1.0, seed=7)
+        b = self._plan(entries, hours=1.0, seed=7)
+        self.assertEqual([e["video_id"] for e in a], [e["video_id"] for e in b])
+
+    def test_a_different_seed_changes_the_selection(self):
+        entries = self._entries(50)
+        a = self._plan(entries, hours=1.0, seed=0)
+        b = self._plan(entries, hours=1.0, seed=1)
+        self.assertNotEqual([e["video_id"] for e in a], [e["video_id"] for e in b])
+
+    def test_entries_without_a_duration_are_dropped(self):
+        entries = self._entries(2)
+        entries[0].pop("duration_sec")
+        got = self._plan(entries, hours=10.0, seed=0)
+        self.assertEqual([e["video_id"] for e in got], ["v1"])
+
+    def test_no_cover_entries_gives_an_empty_plan(self):
+        self.assertEqual(self._plan(self._entries(5, "official"), hours=1.0, seed=0), [])
+
+    def test_a_non_positive_budget_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._plan(self._entries(5), hours=0.0, seed=0)
