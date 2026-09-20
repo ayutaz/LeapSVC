@@ -30,6 +30,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -37,6 +39,19 @@ from preprocess.svc.sidecar import speaker_key  # noqa: E402
 
 REPO_ID = "tts-dataset/japanese-singing-voice-vocal-only"
 N_SHARDS = 40
+
+
+def budget_exhausted(*, total: float, budget: float, typical_sec: float) -> bool:
+    """**もう 1 本も入らないなら True。** 残り時間が典型的な 1 曲に満たなければ打ち切る。
+
+    **実測で踏んだ壊れ方（2026-09-20）:** 30 h の予算に対し **29.98 h** まで埋めた後、
+    残り 72 秒に収まる曲を探して **40 tar を延々と streaming し続けました**（選択数は
+    増えないまま約 1 時間）。`total >= budget` だけを終了条件にすると、**端数が永遠に
+    埋まらない**ためです。**通信量がそのまま料金になります。**
+    """
+    if total >= budget:
+        return True
+    return (budget - total) < float(typical_sec)
 
 
 def plan_selection(entries: Iterable[Mapping[str, Any]], *, hours: float, seed: int,
@@ -71,15 +86,18 @@ def plan_selection(entries: Iterable[Mapping[str, Any]], *, hours: float, seed: 
     speakers = sorted(by_spk)
     rng.shuffle(speakers)
 
+    typical = float(np.median([float(e["duration_sec"]) for e in usable])) if usable else 0.0
     out: list[dict[str, Any]] = []
     total = 0.0
     for spk in speakers:
         for e in by_spk[spk][: max(1, int(per_speaker))]:
             sec = float(e["duration_sec"])
             if total + sec > budget:
-                return out
+                continue
             out.append(e)
             total += sec
+        if budget_exhausted(total=total, budget=budget, typical_sec=typical):
+            break
     return out
 
 
@@ -121,8 +139,11 @@ def _stream(out_dir: Path, shards: Sequence[int], hours: float, seed: int,
     picked: list[dict[str, Any]] = []
     seen = 0
 
+    typical = 0.0
     for idx in order:
-        if total >= budget:
+        if budget_exhausted(total=total, budget=budget, typical_sec=typical):
+            print(f"  予算を使い切ったので残り {len(order) - order.index(idx)} shard は読みません",
+                  flush=True)
             break
         url = hf_hub_url(REPO_ID, f"data/vocals-{idx:04d}.tar", repo_type="dataset")
         with requests.get(url, headers=dict(build_hf_headers()), stream=True,
@@ -153,6 +174,7 @@ def _stream(out_dir: Path, shards: Sequence[int], hours: float, seed: int,
                         continue
                     taken[spk] = taken.get(spk, 0) + 1
                     total += float(sec)
+                    typical = max(typical, float(sec) * 0.9)   # 見た中で最も長い曲の 9 割
                     picked.append({"video_id": meta.get("id"), "channel_id": spk,
                                    "channel_title": meta.get("channel_title"),
                                    "title": meta.get("title"), "duration_sec": sec,
@@ -161,7 +183,7 @@ def _stream(out_dir: Path, shards: Sequence[int], hours: float, seed: int,
                         dst = out_dir / spk
                         dst.mkdir(parents=True, exist_ok=True)
                         (dst / f"{meta.get('id')}.wav").write_bytes(tf.extractfile(member).read())
-                    if total >= budget:
+                    if budget_exhausted(total=total, budget=budget, typical_sec=typical):
                         break
         print(f"  shard {idx:04d}: 選択 {len(picked)} / 走査 {seen} | 累計 {total / 3600:.2f} h",
               flush=True)

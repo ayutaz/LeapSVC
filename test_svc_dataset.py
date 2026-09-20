@@ -845,3 +845,45 @@ class P1CorpusSelectionTests(unittest.TestCase):
     def test_a_non_positive_budget_is_rejected(self):
         with self.assertRaises(ValueError):
             self._plan(self._entries(5), hours=0.0, seed=0)
+
+
+class P1CorpusBudgetStopTests(unittest.TestCase):
+    """予算を使い切ったら**残りの shard を流し続けない**（2026-09-20 に実測で踏んだ）。
+
+    30 h の予算に対し 29.98 h まで埋めた後、**残り 72 秒に収まる曲を探して 40 tar を
+    延々と streaming し続けました**（選択数は増えないまま 1 時間）。通信と時間が無駄になります。
+    """
+
+    def _mod(self):
+        import importlib.util
+        from pathlib import Path
+        spec = importlib.util.spec_from_file_location(
+            "p1_corpus", Path(__file__).resolve().parent / "tools" / "p1_corpus.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_budget_is_exhausted_when_no_typical_clip_fits(self):
+        mod = self._mod()
+        # 予算 1.0 h、残り 30 秒。典型的な曲は 240 秒なので、もう入らない。
+        self.assertTrue(mod.budget_exhausted(total=3570.0, budget=3600.0, typical_sec=240.0))
+
+    def test_the_budget_is_not_exhausted_while_a_clip_still_fits(self):
+        mod = self._mod()
+        self.assertFalse(mod.budget_exhausted(total=3000.0, budget=3600.0, typical_sec=240.0))
+
+    def test_reaching_the_budget_exactly_is_exhausted(self):
+        mod = self._mod()
+        self.assertTrue(mod.budget_exhausted(total=3600.0, budget=3600.0, typical_sec=240.0))
+
+    def test_a_short_typical_clip_keeps_the_budget_open(self):
+        mod = self._mod()
+        self.assertFalse(mod.budget_exhausted(total=3570.0, budget=3600.0, typical_sec=20.0))
+
+    def test_plan_selection_stops_instead_of_scanning_the_rest(self):
+        """`plan_selection` も同じ規則で打ち切る（到着順の経路と規則を揃える）。"""
+        mod = self._mod()
+        entries = [{"video_id": f"v{i}", "channel_id": f"c{i}",
+                    "dataset_category": "cover", "duration_sec": 240} for i in range(100)]
+        got = mod.plan_selection(entries, hours=1.0, seed=0)
+        self.assertEqual(len(got), 15)      # 240 s x 15 = 1.0 h
