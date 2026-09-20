@@ -1308,3 +1308,31 @@ class SpeakersRootTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             write_run_config([], Path(self.tmp.name) / "x.yaml",
                              Path("configs/svc_base_multi.yaml"))
+
+    def test_the_heavy_models_are_built_once_for_all_speakers(self):
+        """**注入しない既定の経路**で、モデルが話者の数だけ作られないこと。
+
+        実測（2026-09-20）: `run_speakers` が `encoder=None` をそのまま
+        `stage_extract` へ渡していたため、**12 話者で 39 回**読み込んでいた。
+        注入した経路しかテストしていなかったので気づけなかった。
+        """
+        from preprocess.svc import run as run_mod
+        enc, f0 = self._fakes()
+        built = {"enc": 0, "f0": 0}
+
+        def fake_enc(*a, **kw):
+            built["enc"] += 1
+            return enc
+
+        def fake_f0(*a, **kw):
+            built["f0"] += 1
+            return f0
+
+        orig_enc, orig_f0 = run_mod.ContentVecEncoder, run_mod.RmvpeF0
+        run_mod.ContentVecEncoder, run_mod.RmvpeF0 = fake_enc, fake_f0
+        try:
+            out = run_mod.run_speakers(self._args(), self.MEL)
+        finally:
+            run_mod.ContentVecEncoder, run_mod.RmvpeF0 = orig_enc, orig_f0
+        self.assertEqual(len(out), 2)
+        self.assertEqual(built, {"enc": 1, "f0": 1})

@@ -244,6 +244,13 @@ def run_speakers(args, mel: MelSpec, *, encoder=None, f0x=None) -> list[dict]:
     if not dirs:
         sys.exit(f"話者ディレクトリが見つかりません: {root}")
 
+    # **重いモデルはここで 1 度だけ作る。** `stage_extract` へ None を渡すと話者ごとに
+    # 作り直され、実測で **12 話者に 39 回**読み込んでいた（2026-09-20）。
+    if encoder is None:
+        encoder = ContentVecEncoder(args.content_model, layer=args.layer, device=args.device)
+    if f0x is None:
+        f0x = RmvpeF0(f0_min=args.f0_min, f0_max=args.f0_max, device=args.device)
+
     out_root = Path(args.out)
     built: list[dict] = []
     skipped: list[str] = []
