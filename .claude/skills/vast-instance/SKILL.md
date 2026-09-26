@@ -122,6 +122,40 @@ uv run python tools/vast.py create <offer_id> --disk 60 --yes
 
 **`success: false` でも `instances` を確認すること。** これは料金に直結します。
 
+### 3f. 起動待ちが「永遠に準備中」のまま 4 日課金された（2026-09-26）。**これまでで最大の損失**
+
+**何が起きたか（確認済み、インスタンスのログから）:** S1b 用に借りたホストで
+`/root/.ssh/authorized_keys` の権限が壊れており、sshd が
+**`Authentication refused: bad ownership or modes`** で**最初から鍵を拒否**していました
+（ログに**認証成功 0 回・拒否 308 回**）。起動待ちのループは
+
+```bash
+until ssh ... 'grep -q 完了 /root/bootstrap.log' 2>/dev/null; do sleep 30; done
+```
+
+で、**`2>/dev/null` が認証エラーを握りつぶし、タイムアウトも無かった**ので、失敗を一度も
+報告しないまま待ち続けました。**セッションが切れた後もインスタンスだけが残り、
+何も走らないまま約 4 日（$0.0794/hr × 約 90 時間 ≈ $7）課金されました** ――
+それまでの計算費の合計（約 $2.5）より大きい損失です。
+
+**対処（道具にした）:** `tools/vast.py wait-ssh <id>` を使うこと。自前の `until ssh` ループを書かない。
+
+```bash
+uv run python tools/vast.py wait-ssh <instance_id> --timeout 1200
+# 成功: "host port" を 1 行出して終了コード 0
+# 認証拒否が 4 回続く: 終了コード 2 → そのインスタンスは捨てて別の offer へ
+# タイムアウト:        終了コード 3
+```
+
+- **「まだ起動していない」（`Connection refused` / `timed out`）と「この先も通らない」
+  （`Permission denied`）を分けます。** 鍵の反映待ちの数回は許し、続いたら止めます。
+- **待ちには必ず上限を付けます**（既定 20 分）。
+- **接続先は毎回 `ssh-url` から引き直します**（途中で変わるため）。
+- ホスト側の権限の問題は**外から直せません**（`attach` は `already` を返すだけ）。**捨てて借り直す。**
+
+**一般則: バックグラウンドの待ちは、成功だけでなく失敗の終端でも止まること。**
+「沈黙は成功ではない」。**止まらない待ちは、セッションが切れると課金だけを残します。**
+
 **借りる前のチェックに 1 行足す:** **「評価に使う `--spk-id` と hold-out 曲が、新しい素材で
 成立するか」**（[leapsinger-experiment](../leapsinger-experiment/SKILL.md) 6d 節）。
 **これは手元で確かめられます。** 今回は学習を始める前に気づけましたが、

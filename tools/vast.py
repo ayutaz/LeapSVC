@@ -298,6 +298,99 @@ def cmd_attach(a):
     run(["attach", "ssh", str(a.instance_id), key])
 
 
+SSH_MARKER = "LEAPSVC_SSH_OK"
+_NOT_UP = ("Connection refused", "timed out", "Connection closed", "Could not resolve",
+           "No route to host", "Connection reset")
+_SSH_URL = re.compile(r"ssh://[^@\s]+@([^:\s]+):(\d+)")
+
+
+def classify_ssh(returncode: int, stdout: str, stderr: str) -> str:
+    """1 回の ssh 試行を `ready` / `auth_refused` / `not_up` / `unknown` に分ける。
+
+    **「まだ起動していない」と「この先も通らない」を区別するための関数です。**
+    2026-09-26 に、sshd が `bad ownership or modes for file /root/.ssh/authorized_keys` で
+    **最初から鍵を拒否**しているのに、起動待ちがそれを「準備中」と読み続けて約 4 日（$7）
+    課金されました。
+    """
+    if returncode == 0 and SSH_MARKER in (stdout or ""):
+        return "ready"
+    err = stderr or ""
+    if "Permission denied" in err:
+        return "auth_refused"
+    if any(s in err for s in _NOT_UP):
+        return "not_up"
+    return "unknown"
+
+
+def ssh_wait_decision(outcomes: list[str], elapsed: float, *, timeout: float,
+                      max_auth_refused: int = 4) -> str:
+    """起動待ちを続けるか。`ok` / `wait` / `fail:auth` / `fail:timeout` を返す。
+
+    - 最後の試行が `ready` なら `ok`。
+    - **末尾に連続した `auth_refused` が `max_auth_refused` 回に達したら `fail:auth`。**
+      鍵の反映には数秒かかる（`attach` の直後）ので 1 回では止めないが、続くなら
+      この先も通らない。
+    - `elapsed` が `timeout` を超えたら `fail:timeout`。**待ちには必ず上限を付ける。**
+    """
+    if outcomes and outcomes[-1] == "ready":
+        return "ok"
+    streak = 0
+    for o in reversed(outcomes):
+        if o != "auth_refused":
+            break
+        streak += 1
+    if streak >= max_auth_refused:
+        return "fail:auth"
+    if elapsed >= timeout:
+        return "fail:timeout"
+    return "wait"
+
+
+def parse_ssh_url(text: str) -> tuple[str, int]:
+    """`vastai ssh-url` の出力から (host, port) を取る。**接続先は途中で変わる**ので毎回引く。"""
+    m = _SSH_URL.search(text or "")
+    if not m:
+        raise ValueError(f"ssh の接続先を読めません: {text[:200]!r}")
+    return m.group(1), int(m.group(2))
+
+
+def cmd_wait_ssh(a):
+    """SSH が通るまで待つ。**通らないと分かった時点とタイムアウトで止める。**
+
+    成功したら `host port` を標準出力へ 1 行で出す（スクリプトから使う）。
+    失敗は終了コード 2（認証拒否）/ 3（タイムアウト）。**認証拒否のときは、
+    そのインスタンスは捨てて別の offer を選ぶこと**（ホスト側の権限の問題は外から直せない）。
+    """
+    import time
+    key = str(Path(a.key).expanduser())
+    outcomes: list[str] = []
+    t0 = time.time()
+    while True:
+        try:
+            host, port = parse_ssh_url(run(["ssh-url", str(a.instance_id)], raw=True, check=False))
+        except ValueError:
+            host, port, cls = "", 0, "not_up"
+        else:
+            p = subprocess.run(
+                ["ssh", "-i", key, "-p", str(port), "-o", "BatchMode=yes",
+                 "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=15",
+                 f"root@{host}", f"echo {SSH_MARKER}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+            cls = classify_ssh(p.returncode, p.stdout, p.stderr)
+        outcomes.append(cls)
+        verdict = ssh_wait_decision(outcomes, time.time() - t0, timeout=a.timeout,
+                                    max_auth_refused=a.max_auth_refused)
+        print(f"[wait-ssh] {len(outcomes):3d} {cls:13s} -> {verdict}", file=sys.stderr, flush=True)
+        if verdict == "ok":
+            print(f"{host} {port}")
+            return
+        if verdict == "fail:auth":
+            sys.exit(2)
+        if verdict == "fail:timeout":
+            sys.exit(3)
+        time.sleep(a.interval)
+
+
 def cmd_destroy(a):
     if not a.yes:
         print(f"インスタンス {a.instance_id} を破棄します（データは消えます・取り消し不可）。\n"
@@ -348,6 +441,15 @@ def main():
     at.add_argument("instance_id", type=int)
     at.add_argument("--pubkey", default="~/.ssh/id_ed25519_vast.pub")
     at.set_defaults(fn=cmd_attach)
+
+    w = sub.add_parser("wait-ssh", help="SSH が通るまで待つ（認証拒否とタイムアウトで止まる）")
+    w.add_argument("instance_id", type=int)
+    w.add_argument("--key", default="~/.ssh/id_ed25519_vast")
+    w.add_argument("--timeout", type=float, default=1200.0, help="秒。待ちには必ず上限を付ける")
+    w.add_argument("--interval", type=float, default=30.0)
+    w.add_argument("--max-auth-refused", type=int, default=4,
+                   help="認証拒否がこの回数続いたら止める（鍵の反映待ちの数回は許す）")
+    w.set_defaults(fn=cmd_wait_ssh)
 
     d = sub.add_parser("destroy", help="インスタンスを破棄する（取り消し不可）")
     d.add_argument("instance_id", type=int)

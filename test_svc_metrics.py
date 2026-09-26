@@ -2384,3 +2384,77 @@ class LoudnessStabilityTests(unittest.TestCase):
         r = loudness_report(src, src.copy(), sr=44100, hop=256)
         self.assertIn("frame_jitter_db", r)
         self.assertLess(r["frame_jitter_db"], 0.5)
+
+
+class VastWaitSshTests(unittest.TestCase):
+    """起動待ちは「永遠に準備中」になってはいけない（2026-09-26 に実費で踏んだ）。
+
+    ホスト側で `/root/.ssh/authorized_keys` の権限が壊れており、sshd が
+    `Authentication refused: bad ownership or modes` で**最初から鍵を拒否**していた。
+    起動待ちのループは `2>/dev/null` で認証エラーを握りつぶし、タイムアウトも無かったので、
+    **失敗を一度も報告しないまま約 4 日（$7）課金された**。ログには認証成功 0 回・拒否 308 回。
+
+    **「まだ起動していない」と「この先も通らない」を区別し、後者とタイムアウトで止めること。**
+    """
+
+    def test_a_successful_probe_is_ready(self):
+        from tools.vast import classify_ssh
+        self.assertEqual(classify_ssh(0, "LEAPSVC_SSH_OK\n", ""), "ready")
+
+    def test_exit_zero_without_the_marker_is_not_ready(self):
+        # バナーだけ出て切れた、などを成功と読まない。
+        from tools.vast import classify_ssh
+        self.assertNotEqual(classify_ssh(0, "Welcome to vast.ai\n", ""), "ready")
+
+    def test_permission_denied_is_an_auth_refusal(self):
+        from tools.vast import classify_ssh
+        err = "root@1.2.3.4: Permission denied (publickey).\n"
+        self.assertEqual(classify_ssh(255, "", err), "auth_refused")
+
+    def test_connection_refused_and_timeouts_mean_not_up_yet(self):
+        from tools.vast import classify_ssh
+        for err in ("ssh: connect to host h port 22: Connection refused",
+                    "ssh: connect to host h port 22: Connection timed out",
+                    "kex_exchange_identification: Connection closed by remote host"):
+            self.assertEqual(classify_ssh(255, "", err), "not_up", err)
+
+    def test_anything_else_is_unknown(self):
+        from tools.vast import classify_ssh
+        self.assertEqual(classify_ssh(1, "", "something odd"), "unknown")
+
+    def test_ready_stops_the_wait(self):
+        from tools.vast import ssh_wait_decision
+        self.assertEqual(ssh_wait_decision(["not_up", "ready"], 60, timeout=900), "ok")
+
+    def test_a_persistent_auth_refusal_fails_fast(self):
+        """鍵の反映には数秒かかるので 1 回の拒否では止めない。続いたら止める。"""
+        from tools.vast import ssh_wait_decision
+        self.assertEqual(
+            ssh_wait_decision(["auth_refused"] * 4, 120, timeout=900, max_auth_refused=4),
+            "fail:auth")
+
+    def test_a_single_auth_refusal_keeps_waiting(self):
+        from tools.vast import ssh_wait_decision
+        self.assertEqual(
+            ssh_wait_decision(["not_up", "auth_refused"], 60, timeout=900, max_auth_refused=4),
+            "wait")
+
+    def test_only_a_trailing_streak_of_refusals_counts(self):
+        from tools.vast import ssh_wait_decision
+        seq = ["auth_refused"] * 3 + ["not_up"] + ["auth_refused"] * 2
+        self.assertEqual(ssh_wait_decision(seq, 300, timeout=900, max_auth_refused=4), "wait")
+
+    def test_the_wait_has_a_hard_timeout(self):
+        from tools.vast import ssh_wait_decision
+        self.assertEqual(ssh_wait_decision(["not_up"] * 50, 901, timeout=900), "fail:timeout")
+
+    def test_the_ssh_url_is_parsed(self):
+        from tools.vast import parse_ssh_url
+        self.assertEqual(parse_ssh_url("ssh://root@1.208.108.242:33361\n"),
+                         ("1.208.108.242", 33361))
+        self.assertEqual(parse_ssh_url("x\nssh://root@ssh2.vast.ai:17052"), ("ssh2.vast.ai", 17052))
+
+    def test_an_unparseable_url_is_rejected(self):
+        from tools.vast import parse_ssh_url
+        with self.assertRaises(ValueError):
+            parse_ssh_url("no url here")
