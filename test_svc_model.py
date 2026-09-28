@@ -244,6 +244,28 @@ class BundledVocoderTests(unittest.TestCase):
                                    f"{name} は入力長ぶんを一度に展開する旧い書き出しです")
 
 
+class VocoderThreadsTests(unittest.TestCase):
+    """ボコーダーの ORT intra-op スレッドは**既定 4**。
+
+    省メモリ版は `Scan` の逐次ループを含むので、スレッドを増やすほど遅くなります。
+    手元（Ryzen 9 5900X、12 コア）の実測で、V3.1 の RTF は 10 秒入力で 1 / 2 / 4 / 8 /
+    ORT 既定（12）/ 24 スレッドが 0.243 / 0.226 / 0.233 / 0.308 / 0.403 / 0.487、20 秒入力で
+    2 / 4 / 既定が 0.284 / 0.297 / 0.420 でした。上流 NHVSing も M4 で 4 が最速です。
+    """
+
+    VOC = str(Path(__file__).resolve().parent / "checkpoints" / "nhv_v3_1.onnx")
+
+    def test_defaults_to_four_threads(self):
+        from infer import load_vocoder
+        v = load_vocoder(self.VOC)
+        self.assertEqual(v.session.get_session_options().intra_op_num_threads, 4)
+
+    def test_none_leaves_the_choice_to_onnxruntime(self):
+        from infer import load_vocoder
+        v = load_vocoder(self.VOC, intra_op_threads=None)
+        self.assertEqual(v.session.get_session_options().intra_op_num_threads, 0)
+
+
 class SvcUnsupportedOptionsTests(unittest.TestCase):
     """SVC の経路が**黙って無視する設定**は、学習を始める前に止める。
 
