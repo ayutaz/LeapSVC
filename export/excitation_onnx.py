@@ -38,7 +38,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
 def _harm_rms(n_harm: int, decay: float = 1.0) -> float:
     """RMS of Sum_{k=1..K}(1/k^decay)*sin(k*phi). Identical to harmonic_excitation._harm_rms."""
     return math.sqrt(sum((1.0 / k ** decay) ** 2 for k in range(1, n_harm + 1)) / 2.0)
