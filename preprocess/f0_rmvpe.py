@@ -132,6 +132,7 @@ def extract_f0_rmvpe(
     despike: bool = True,
     octave_fix: bool = False,      # opt-in: RMVPE was verified clean on the example DBs
     interpolate: bool = True,
+    algo=None,                     # SVC injects its own RMVPE (see preprocess/svc/encoders.py)
 ):
     """wav → (f0, uv[1=voiced/0=unvoiced]) at frame rate sr/hop.
 
@@ -146,7 +147,8 @@ def extract_f0_rmvpe(
     peak = np.abs(w).max()
     if peak > 1e-6:
         w = np.clip(w / peak, -1.0, 1.0)
-    algo = _get_algo(sample_rate, hop_size, device)
+    if algo is None:
+        algo = _get_algo(sample_rate, hop_size, device)
     f0_raw, voiced_flag, _ = algo.extract_pitch(w)
     voiced = np.asarray(voiced_flag, bool)
     f0_raw = np.asarray(f0_raw, np.float32)

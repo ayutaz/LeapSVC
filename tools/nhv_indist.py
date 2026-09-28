@@ -126,16 +126,13 @@ def main() -> int:
     import soundfile as sf
 
     from infer import load_vocoder, mel_to_wav
-    from preprocess.f0_rmvpe import extract_f0_rmvpe
+    from preprocess.svc.encoders import RmvpeF0
 
     mel_spec = MelSpec()
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     vocoder = load_vocoder(str(ROOT / a.vocoder), sr=mel_spec.sr)
-
-    def f0_extract(wav, sr, hop):
-        return extract_f0_rmvpe(wav, int(sr), int(hop), 65.0, 1100.0,
-                                device=a.device, interpolate=False)
+    f0_extract = RmvpeF0(f0_min=65.0, f0_max=1100.0, device=a.device)   # SVC 前処理と同じ F0
 
     def mel_of(wav):
         return wav_to_mel_nhv(wav, sr=mel_spec.sr, n_fft=mel_spec.n_fft, hop=mel_spec.hop,

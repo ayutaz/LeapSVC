@@ -61,7 +61,7 @@ def main() -> int:
     import torch
 
     from infer import infer_svc_mel, load_acoustic, load_vocoder, mel_to_wav
-    from preprocess.f0_rmvpe import extract_f0_rmvpe
+    from preprocess.svc.encoders import RmvpeF0
 
     deterministic = os.environ.get("LEAPSINGER_NONDETERMINISTIC") != "1"
     if deterministic:
@@ -112,9 +112,9 @@ def main() -> int:
     }
 
     # 出力から F0 を取り直して、入力とどれだけ合っているかを測る（ゴール 3）。
+    f0x = RmvpeF0(f0_min=65.0, f0_max=1100.0, device=a.device)   # SVC 前処理と同じ F0
     for tag, wav in (("pred", wav_pred), ("gt_mel", wav_gt)):
-        f0_o, uv_o = extract_f0_rmvpe(wav, sr, hop, 65.0, 1100.0,
-                                      device=a.device, interpolate=False)
+        f0_o, uv_o = f0x(wav, sr, hop)
         n = min(len(f0_o), frames)
         report[f"goal3_f0_{tag}"] = voiced_stats(f0_hz[:n], uv[:n],
                                                  np.asarray(f0_o)[:n], np.asarray(uv_o)[:n])
