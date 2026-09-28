@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## このリポジトリについて
 
-LeapSinger は歌声合成（SVS）用の音響モデルです。ランダムノイズではなく **F0 から作った「擬似 mel」（倍音インパルス＋白色ノイズ）を rectified flow の出発点 `x0`** にすることで、1 ステップ（`num_steps: 1`）で mel を生成します。mel → 波形は別リポジトリの NHVSing ボコーダーが担当します（SVS は `nhv_v3_2*.onnx`、**SVC は `nhv_v3_1*.onnx` 据え置き**。下の「既知の落とし穴」を参照）。
+LeapSinger は歌声合成（SVS）用の音響モデルです。ランダムノイズではなく **F0 から作った「擬似 mel」（倍音インパルス＋白色ノイズ）を rectified flow の出発点 `x0`** にすることで、1 ステップ（`num_steps: 1`）で mel を生成します。mel → 波形は別リポジトリの NHVSing ボコーダーが担当します（SVS は `nhv_v3_2*.onnx`、**SVC は `nhv_v3_1*.onnx` 据え置き**。4 ファイルとも 2026-09-19 の**省メモリ版の書き出し**。下の「既知の落とし穴」を参照）。
 
 **歌声変換（SVC）経路**は既存 SVS を残したまま `main` に入っています（2026-09-18 に `feature/svc` を merge して削除。それ以前の記述はこのブランチ名を指します）。設計・調査ドキュメントは `doc/svc.md` が索引になっています（作業前に必ず読むこと）。
 
@@ -97,7 +97,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **514 件**（`test_svc_model` 64 / `test_svc_preprocess` 115 / `test_svc_dataset` 82 / `test_svc_metrics` 253）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **527 件**（`test_svc_model` 71 / `test_svc_preprocess` 118 / `test_svc_dataset` 82 / `test_svc_metrics` 256）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -220,7 +220,7 @@ hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と 
 | `lock` | ubuntu | `uv lock --check`（**lock はコミット対象**なので、忘れを止める） |
 | `lint` | ubuntu | `uvx ruff@<pyproject の pin> check .`。**版は pyproject から採る**ので真実の在処が 1 つ |
 | `guard` | ubuntu | `tools/hooks/test_guard.py`（55 件）。stdlib だけなので `--no-project` |
-| `tests` | **macOS** | `uv sync --locked` + 単体テスト 514 件 + ruff + リンク検査 |
+| `tests` | **macOS** | `uv sync --locked` + 単体テスト 527 件 + ruff + リンク検査 |
 
 **単体テストを Linux で回していません（理由を残します）。** pyproject は Linux / Windows の
 torch を **CUDA index (cu130)** に固定していて、lock 上の torch + nvidia wheel は **4.23 GB**
@@ -428,6 +428,37 @@ A 10 / B 15（p_side 0.4244、系は 0.0009）で無罪、similarity は **A 0 /
 なお V3.2 は**高音域でフレーム単位に波形が急激に弱まる現象**（LTV フィルタの矩形
 overlap-add による逆位相の打ち消し）を Hann WOLA で直したもので、**入出力の仕様は V3.1 と
 同一**です。
+- **同梱ボコーダー 4 ファイルは省メモリ版の書き出しです（2026-09-29 取り込み）。**
+NHVSing 8e804b2 が励起と時変 FIR を ONNX の `Scan` で回す形に書き出し直したもので、
+**重みは同じ**です。旧い書き出しは入力長ぶんの中間テンソルを一度に展開していて、
+**手元の Windows / ORT 1.29 で 0.84 GB/音声秒**（上流の報告 約 125 MB/秒の 7 倍）、
+`svc_convert.py` の既定 chunk（20 秒）では **1 回の呼び出しが約 17 GB** でした。省メモリ版は
+約 18 MB/秒（120 秒でも 2.12 GB）です。**出力は同一**（乱数ノードを固定入力に置き換えて
+SNR 142 dB）なので、**上限は変わらず、「上限との差」を測り直す必要はありません。**
+旧い版に戻すと `test_svc_model.BundledVocoderTests` が落ちます。一次データは
+`out/m5/_vocoder_mem/`、経過は [`doc/svc-plan.md`](doc/svc-plan.md) 12 節。
+- **省メモリ版のボコーダーは、スレッドを増やすほど遅くなります（2026-09-29 実測）。**
+逐次ループを含むためで、12 コアの Ryzen で RTF は ORT 既定（12 本）が 0.403、**4 本で 0.233**
+（10 秒入力）でした。`infer.load_vocoder` の既定は `intra_op_threads=4` です
+（`None` で ORT の既定に戻る）。**旧い書き出しはスレッド数に依らず 0.39〜0.44** でした。
+- **SVS と SVC で F0 の clip の扱いが違います（2026-09-29 決定）。** 上流 9ceca86 は RMVPE 後の
+`[fmin, fmax]` clip を外しました（範囲外の値が捨てられずに境界へ張り付き、平坦な音を作るため）。
+**SVS は上流に従います。SVC は `preprocess/svc/encoders.py` の `NativeGridClip` で
+65〜1100 Hz の clip を残します** ―― 既存の shard と checkpoint がこの clip 込みの F0 で
+作られているためです。旧実装の clip は**補間の前（RMVPE のネイティブ格子）**に掛かっていたので、
+抽出結果を後から clip しても一致しません。main と bit 一致することを 4 入力（実録音 3 本と
+55 Hz の合成音。clip が効く男声 1 本と合成音を含む）で確認しました。**clip をやめるなら、既存の shard と
+checkpoint の作り直しとセットで**（要ユーザー判断）。なお `extract_f0_rmvpe(wav, sr, hop,
+65.0, 1100.0, ...)` のような旧い呼び出しは TypeError になり、**単体テストはこの呼び出しを
+通りません**（merge 直後に SVC の前処理と測定ツールが全部これで壊れていました）。
+`test_svc_preprocess.ExtractF0CallerTests` がリポジトリ全体を走査して止めます。
+- **`nhv_v3_2_1.onnx`（PrettyPitch に同梱の試験運転版）は取り込んでいません（2026-09-29）。**
+V3.2 を追加学習したもので、GT mel の再合成（`tools/nhv_indist.py`、5 コーパス × 12 clip）では
+mel L1 が V3.2 より **clip ごとの差の中央値で −0.023**（57/60 で改善、p < 1e-4。同じ V3.1 を
+2 回回した run 間のノイズは −0.0004）と明確に良くなります。**ただし重みが違うので上限が
+変わり、SVC の数値はすべて測り直しです。** 試験運転中で、重みは非商用です。PrettyPitch の
+`checkpoints/CREDITS.txt`（「同じ 3 つのデータベースで学習」）と README（「より広い非商用
+データセット群」）で学習データの記述が食い違っています。採用するかは要ユーザー判断です。
 - **「V3.2 が聴取の『音量が揺れる』を直す」という仮説は、実測で支持されませんでした
 （2026-09-18）。** 26 clip を CPU で 3 run（V3.1 を 2 回 + V3.2）回し、**mel を bit 一致させて
 ボコーダーだけを変えて**測りました。**改善側が過半になった量は 1 つもなく**、上限の
@@ -506,10 +537,17 @@ centroid）にこの感度はなく、**CER に強く出ます**。
 ほとんど変わりません**（M6 の設計に直接効きます）。**README の性能表（SVS 経路・
 Apple Silicon・ボコーダー < 0.1）とは機種も経路も違うので比較できません。**「1-step だから速い」は acoustic の
 話であって pipeline 全体ではありません。`realtime_capable` は `rtf_total < 1` を見ているだけで、
-chunk 境界も I/O 遅延も連続運転も見ていません。
+chunk 境界も I/O 遅延も連続運転も見ていません。**2026-09-29 に省メモリ版のボコーダーで
+測り直しました。** 同じ日・同じ手順でボコーダーだけを替えると、**GPU 20 秒で合計
+0.658 → 0.339**（ボコーダー 0.625 → 0.311、全体の 92%）、**CPU 10 秒で 0.899 → 0.668**
+（ボコーダー 0.520 → 0.319）です。上の 0.464 / 0.654 は `nhv_v3.onnx` で別の日に測った値なので、
+**この比較と混ぜないこと**。**上の値はすべて 1 step の計測です**（README は「flow 16 step」と
+書いていましたが誤りでした）。**SVC の既定の 16 step では、GPU 20 秒で合計 0.328（ボコーダー
+0.291 = 89%）ですが、CPU 10 秒では acoustic が 0.446 でボコーダーの 0.261 を上回ります。**
+「acoustic を速くしても end-to-end は動かない」は GPU（と CPU の 1 step）に限った話です。
 - **信号品質（SQUIM）は話し声で学習されています。** 歌声への妥当性は未検証なので、
 絶対値ではなく上限との差だけを読みます。
-- SVC では online `pitch_aug` を使えません（特徴量が事前計算済みのため）。`train.py` が明示的に SystemExit します。augmentation は特徴量抽出前に行います。
+- SVC では online `pitch_aug` を使えません（特徴量が事前計算済みのため）。`train.py` が明示的に SystemExit します。augmentation は特徴量抽出前に行います。**`data.eval_dbs`（上流 9ceca86）も SVS 専用**で、SVC の split には効かないので同じく止めます（`_reject_unsupported_svc_options`）。
 - **学習はすべて vast.ai の Linux インスタンスで行います。手元の Windows で `train.py` を起動すると device によらず hook が止めます**（`tools/hooks/guard_commands.py` の `check_local_training`）。`--device cpu` に逃げるのも不可です。CPU は実測で 1 phrase 1200 step に約 60 分かかり、実験記録の環境も本番と食い違います。ローカル GPU は他の作業と取り合って `unspecified launch failure` を起こしました（実際に発生）。 手元の Windows 機は開発・推論・検証用で、セットアップは `tools/vast_bootstrap.sh`。API token 等は `.env`（gitignore 済み）に置きます。`uv.lock` は Linux も解決済みで、Linux では `triton` が入るため下の `torch.compile` の制約は当てはまりません。
 - **Windows では `torch.compile` が使えません。** `harmonic_excitation.py` の倍音和は compile 前提の融合版（Linux + Triton で 3〜4 倍）ですが、Windows には Triton wheel がなく、さらに日本語ロケール（cp932）では inductor の template 読み込み自体が `UnicodeDecodeError` になります。`triton-windows` を入れても C コンパイラが必要です。コードは **compile 生成時と初回呼び出しの両方**でループ版へフォールバックします（数値差は加算順のみ）。最初から切るなら `LEAPSINGER_EXC_COMPILE=0`。
 - **`eval_items` は話者ごとの本数です。** 3 話者なら 9 サンプルですが 23 話者では 69 になり、1 回の eval が mel 図と音声を 138 本書き出して 10 分以上（単一コア 100%）かかります。多話者では `eval_items: 1` にして `eval_interval` も大きくすること（実測で踏みました）。

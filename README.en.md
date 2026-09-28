@@ -100,17 +100,23 @@ each system's ceiling depends on its own vocoder.
 - **Subjective speaker similarity.** Objectively the two systems are equal (0.2% relative), and
   the listening test reached no verdict (all 4 votes landed on whichever side played last).
 
-### RTF (measured, 20-second phrase)
+### RTF (measured, at the SVC default of 16 steps)
 
-| Stage | CPU | GPU |
+| Stage | CPU (10 s) | GPU (20 s) |
 |---|---:|---:|
-| Acoustic (flow, 16 steps) | 0.081 | 0.006 |
-| **Vocoder (NHVSing / ONNX, runs on CPU)** | 0.355 | **0.432** |
-| Total | 0.654 | 0.464 |
+| Feature extraction (ContentVec + RMVPE) | 0.228 | 0.023 |
+| Acoustic (flow, 16 steps) | **0.446** | 0.013 |
+| **Vocoder (NHVSing / ONNX, runs on CPU)** | 0.261 | **0.291** |
+| Total | 0.935 | 0.328 |
 
-**The vocoder is the largest term — 93% of the total on GPU.** Speeding up the acoustic model
-barely moves end-to-end. **"1-step" refers to the acoustic flow**, not the pipeline
-(**the SVC default is 16 steps**; see the table below).
+**On GPU the vocoder is the largest term — 89% of the total.** Speeding up the acoustic model
+barely moves end-to-end there. **On CPU, the 16-step acoustic model outweighs the vocoder.**
+**"1-step" refers to the acoustic flow**, not the pipeline (**the SVC default is 16 steps**; see
+the table below). Measured on 2026-09-29 with the memory-bounded vocoder (4 threads) on a
+Ryzen 9 5900X under Windows ([plan](doc/svc-plan.md), section 12).
+
+> **Correction (2026-09-29):** the previous table labelled the acoustic row "flow, 16 steps",
+> but **it was measured at 1 step**, and the CPU column was a 10-second measurement.
 
 ## Usage (SVC)
 
@@ -206,7 +212,7 @@ charged as content degradation) or which has fewer than 3 clips.
     uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics
     uv run ruff check .
 
-There are **514 unit tests**, none of which need heavy models or network access. `run_smoke.py`
+There are **527 unit tests**, none of which need heavy models or network access. `run_smoke.py`
 feeds synthetic waveforms, so it **proves the wiring, never the quality**.
 
 ## Defaults and caveats (all measured)
@@ -307,7 +313,7 @@ RTF per acoustic model, comparing Python native vs. ONNX across core counts:
 
 (Measured on Apple Silicon, 10 cores, onnxruntime CPU, a real 7.0-second phrase, median of 9 runs. The ONNX build is `export/cli.py` with its defaults, `--variant diffsinger --hop 512`. Results vary by machine.)
 
-**This table is the SVS acoustic model alone.** The **SVC path's end-to-end cost is a different quantity** (see the RTF section above): measured at **total RTF 0.464 on GPU, of which the vocoder is 0.432 (93%)** and the acoustic model only 0.006 (0.654 total on CPU). **Speeding up the acoustic model barely moves end-to-end.** We also **do not call it "real-time" even when `realtime_capable` is True** — chunk boundaries, audio I/O and sustained operation are unmeasured.
+**This table is the SVS acoustic model alone.** The **SVC path's end-to-end cost is a different quantity** (see the RTF section above): measured at **total RTF 0.328 on GPU, of which the vocoder is 0.291 (89%)** and the acoustic model (16 steps) only 0.013 (0.935 total on CPU). **Speeding up the acoustic model barely moves end-to-end.** We also **do not call it "real-time" even when `realtime_capable` is True** — chunk boundaries, audio I/O and sustained operation are unmeasured.
 
 The frame settings are 44.1 kHz and hop size 256. Hop size 512 is handled by averaging each pair of adjacent frames.
 
@@ -419,6 +425,8 @@ measurement is relative to a V3.1 ceiling** and cannot be restated until it is r
 
 The default is **V3.2** — the latest weights. It fixes an abrupt per-frame weakening of the waveform at high pitch by switching the LTV filter's overlap-add to a Hann window. The input/output contract is identical to V3.1, so it is a drop-in replacement (see [NHVSing](https://github.com/wavtechyukky/NHVSing/) for details).
 
+All four files are the **memory-bounded export of 2026-09-19** (NHVSing 8e804b2; same weights). The old export expanded input-length intermediates all at once and ran out of memory on long phrases (**0.84 GB per second of audio** on our Windows machine, about 17 GB for 20 s). The new one costs about 18 MB/s and produces the same output (SNR 142 dB with the noise fixed). Because the excitation and the time-varying FIR now run as sequential loops, **more threads make it slower**; `infer.load_vocoder` runs onnxruntime with **4 threads** (`intra_op_threads=None` restores onnxruntime's default).
+
 ### Options
 
 - **Dictionary** — you can specify any phoneme dictionary. The design can handle languages other than Japanese (multilingual support itself is future work).
@@ -433,7 +441,7 @@ The code is MIT (`LICENSE`). The following are **not** covered by MIT and follow
 - **`preprocess/algorithms/base.py` and `preprocess/algorithms/rmvpe.py`** — both taken verbatim from [pitch-benchmark](https://github.com/lars76/pitch-benchmark) (MIT, Copyright (c) 2025 Lars Nieradzik). Their notice is in `LICENSES/pitch-benchmark-MIT.txt` and must be kept when redistributing. `base.py` is MIT like the rest of this repository.
   `rmvpe.py` is not: the RMVPE model inside it is [Apache-2.0 upstream](https://github.com/Dream-High/RMVPE), so that one file is distributed under Apache-2.0 (full text in `LICENSES/Apache-2.0.txt`). Its `to_local_average_cents()` originates in [CREPE](https://github.com/marl/crepe); that MIT notice is in `LICENSES/crepe-MIT.txt`. The `rmvpe.pt` weights are downloaded at run time and are not distributed here.
 - **Demo and sample audio** (`demo/audio/*_gt.ogg`, `notebooks/sample_data/*.wav`) — excerpts of real recordings from the singing databases, not synthesis output. Each database's terms of use apply.
-- **The bundled vocoder ONNX files** (`checkpoints/nhv_v3_2*.onnx`) — artifacts of [NHVSing](https://github.com/wavtechyukky/NHVSing/).
+- **The bundled vocoder ONNX files** (`checkpoints/nhv_v3_2*.onnx` and `checkpoints/nhv_v3_1*.onnx`) — artifacts of [NHVSing](https://github.com/wavtechyukky/NHVSing/).
 - **The trained models distributed via Releases** and the singing databases used to train them — see `CREDITS.txt` in the model release.
 
 **The SVC path is more restricted.** Its base model is trained on **GTSinger (CC BY-NC-SA 4.0 — non-commercial, ShareAlike)**, and whether ShareAlike reaches trained weights is not settled by the license text. **No SVC weights are distributed**: the project decision is research and personal use only (`doc/svc-dataset-ledger.md`). **We may publish them once the licensing is settled, but we promise neither that nor a date** — three things have to be resolved first: how ShareAlike applies to trained weights, Natsume Yuuri's terms (which forbid using audio derived from the database as machine-learning data), and Oniku Kurumi's silence on weight distribution. GTSinger's README also forbids generating a specific person's singing voice without their consent, so **converting a voice requires the target singer's consent**, independently of any software license. See the SVC NOTICE in `LICENSE`.

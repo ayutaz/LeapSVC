@@ -9,7 +9,7 @@ They are listed here. If you redistribute LeapSinger, carry these notices with i
 | Pitch-algorithm base classes | `preprocess/algorithms/base.py` | MIT (pitch-benchmark) |
 | RMVPE pitch estimator | `preprocess/algorithms/rmvpe.py` | Apache-2.0, plus the MIT notices below |
 | RMVPE weights `rmvpe.pt` | downloaded at run time, **not** in this repo | see §3 |
-| Neural vocoder | `checkpoints/nhv_v3_2.onnx`, `checkpoints/nhv_v3_2x.onnx` | NHVSing project |
+| Neural vocoder | `checkpoints/nhv_v3_2.onnx`, `checkpoints/nhv_v3_2x.onnx`, `checkpoints/nhv_v3_1.onnx`, `checkpoints/nhv_v3_1x.onnx` | NHVSing project |
 | Demo and sample audio | `demo/audio/*_gt.ogg`, `notebooks/sample_data/*.wav` | each singing database's terms of use |
 | Acoustic-model checkpoints | GitHub Releases, **not** in this repo | each singing database's terms of use |
 
@@ -78,6 +78,9 @@ you redistribute the weights yourself, check with the RMVPE authors first.
 `checkpoints/nhv_v3_2.onnx` and `checkpoints/nhv_v3_2x.onnx` are built artifacts of the
 [NHVSing](https://github.com/wavtechyukky/NHVSing/) project (also ours, MIT) and are
 governed by that project's license and by the terms of the data it was trained on.
+The same applies to `checkpoints/nhv_v3_1.onnx` and `checkpoints/nhv_v3_1x.onnx` (the
+previous weights), which this fork keeps because every SVC measurement is stated relative
+to a V3.1 ceiling. NHVSing distributes its trained weights for **non-commercial** use.
 
 ## 5. Demo and sample audio
 

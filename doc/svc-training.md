@@ -18,7 +18,7 @@ must ではありません。起動条件は「同一 test set の blind compari
 baseline を上回り、guard rail を 1 つも落としていないこと」です
 （[実行計画](svc-plan.md#m6-streaming-student)）。**着手するときの最初の作業は蒸留では
 なくボコーダーの実行経路の測定です** ―― GPU の end-to-end RTF 0.464 のうち
-**ボコーダーが 0.432（93%）**で、**蒸留は lookahead に効き RTF には効きません**。
+**ボコーダーが 0.432（93%）**で、**蒸留は lookahead に効き RTF には効きません**（2026-09-29 に省メモリ版で測り直すと 0.328 のうち 0.291 = 89%。[実行計画](svc-plan.md#12-上流の省メモリ書き出しの取り込み2026-09-29)）。
 
 ## 2. Phase 0: 前処理と overfit smoke
 
