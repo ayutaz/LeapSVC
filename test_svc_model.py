@@ -222,6 +222,33 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class SvcUnsupportedOptionsTests(unittest.TestCase):
+    """SVC の経路が**黙って無視する設定**は、学習を始める前に止める。
+
+    `data.eval_dbs`（上流 9ceca86）は `LeapSingerDataset` にしか渡りません。SVC で
+    書いても split は変わらず、**hold-out を絞ったつもりの実験が別物になります**。
+    online `pitch_aug` も同じ理由で止めています（特徴量が事前計算済みのため）。
+    """
+
+    def test_svc_rejects_eval_dbs(self):
+        from train import _reject_unsupported_svc_options
+        with self.assertRaises(SystemExit):
+            _reject_unsupported_svc_options(True, {}, {"eval_dbs": ["ritsu"]})
+
+    def test_svc_rejects_online_pitch_aug(self):
+        from train import _reject_unsupported_svc_options
+        with self.assertRaises(SystemExit):
+            _reject_unsupported_svc_options(True, {"pitch_aug": True}, {})
+
+    def test_svs_keeps_both_options(self):
+        from train import _reject_unsupported_svc_options
+        _reject_unsupported_svc_options(False, {"pitch_aug": True}, {"eval_dbs": ["ritsu"]})
+
+    def test_svc_without_those_options_passes(self):
+        from train import _reject_unsupported_svc_options
+        _reject_unsupported_svc_options(True, {"pitch_aug": False}, {"eval_songs": 2})
+
+
 class LoaderKwargsTests(unittest.TestCase):
     """DataLoader の追加引数。**pin_memory は CUDA のときだけ**。
 
