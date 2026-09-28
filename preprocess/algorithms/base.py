@@ -1,3 +1,19 @@
+# Base classes for the pitch-estimation algorithms.
+#
+# Taken verbatim from pitch-benchmark:
+#
+#     https://github.com/lars76/pitch-benchmark  --  algorithms/base.py
+#     The MIT License (MIT)
+#     Copyright (c) 2025 Lars Nieradzik
+#
+# PitchAlgorithm, ContinuousPitchAlgorithm and ThresholdPitchAlgorithm are all
+# theirs. The full MIT text is in LICENSES/pitch-benchmark-MIT.txt, and the
+# copyright notice above must be kept when redistributing. See
+# THIRD_PARTY_NOTICES.md.
+#
+# Modified in 2026 by wavtechyukky: PitchAlgorithm no longer clips the estimated
+# pitch to [fmin, fmax]; see the comment at that line for why.
+
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -51,7 +67,10 @@ class PitchAlgorithm(ABC):
 
         voiced = periodicity > 0
         pitch[~voiced] = 0.0
-        pitch[voiced] = np.clip(pitch[voiced], self.fmin, self.fmax)
+        # 推定後の [fmin, fmax] クリップは **行わない**。RMVPE の出力は 360 ビン固定
+        # （約 31.7–2005.5 Hz）で、レンジはモデルに渡らない。ここでクリップすると
+        # レンジ外の値が捨てられるのではなく境界値に張り付き、実在しない平坦な
+        # ロングトーンを作ってしまう（pyworld / praat 時代の名残）。
 
         periodicity = np.clip(periodicity, 0.0, 1.0)
         return pitch, periodicity

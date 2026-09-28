@@ -350,6 +350,9 @@ def main():
     is_svc = cfg["model"].get("arch") == "svc"
     if is_svc and tr.get("pitch_aug", False):
         raise SystemExit("SVC feature training does not support online pitch_aug; augment before extraction")
+    eval_dbs = dcfg.get("eval_dbs")
+    if eval_dbs is not None and not eval_dbs:
+        raise ValueError("data.eval_dbs が空です（eval split が空になります）")
     if is_svc:
         train_ds = SVCFeatureDataset(
             args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
@@ -357,6 +360,7 @@ def main():
     else:
         train_ds = LeapSingerDataset(
             args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
+            eval_dbs=eval_dbs,
             min_sec=dcfg.get("min_sec", 0.3), pitch_aug=tr.get("pitch_aug", False),
             silence=dcfg.get("silence", True),
             silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),
@@ -457,6 +461,7 @@ def main():
     else:
         eval_ds = LeapSingerDataset(
             args.data_dirs, "eval", eval_songs=dcfg.get("eval_songs", 2),
+            eval_dbs=eval_dbs,
             min_sec=dcfg.get("min_sec", 0.3),
             silence=dcfg.get("silence", True),
             silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),

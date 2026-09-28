@@ -281,17 +281,17 @@ CPUで計測したRTF（Real-Time Factor。小さいほど速く、1未満なら
 
 | コア数 | Python native | ONNX |
 |:--:|--:|--:|
-| 1 | 0.027 | 0.090 |
-| 2 | 0.026 | 0.063 |
-| 4 | 0.027 | 0.058 |
-| 8 | 0.026 | 0.054 |
-| 10 | 0.024 | 0.065 |
+| 1 | 0.023 | 0.066 |
+| 2 | 0.021 | 0.047 |
+| 4 | 0.020 | 0.042 |
+| 8 | 0.021 | 0.060 |
+| 10 | 0.021 | 0.062 |
 
-- **Python native** は1ステップなのでコア数にほぼ依存せず、1コアでも RTF 0.027（実時間の約37倍速）です。
-- **ONNX** は onnxruntime のオーバヘッドで native より数倍遅くなりますが、それでも実時間の10倍以上の速さです。コア数は4〜8が最速で、全コア（10）ではかえって遅くなります。
+- **Python native** は1ステップなのでコア数にほぼ依存せず、1コアでも RTF 0.023（実時間の約43倍速）です。
+- **ONNX** は onnxruntime のオーバヘッドで native より数倍遅くなりますが、それでも実時間の15倍以上の速さです。4コアが最速で、8コア以上ではかえって遅くなります。励起の倍音和を逐次加算にしてメモリを入力長から切り離しているため、コア数を増やしてもここが並列化されないためです。
 - **NHVSing ボコーダー** は CPU で RTF 0.1 未満です（詳細は NHVSing のリポジトリを参照）。
 
-（計測条件：Apple Silicon 10コア・onnxruntime CPU・約7秒のフレーズ・中央値。機種によって変わります。）
+（計測条件：Apple Silicon 10コア・onnxruntime CPU・実データの7.0秒フレーズ・9回の中央値。ONNX は `export/cli.py` の既定設定（`--variant diffsinger --hop 512`）で書き出したものです。機種によって変わります。）
 
 **この表は SVS 音響モデル単体の値です。** **SVC 経路の end-to-end は別物**で（上の RTF の節）、実測では **GPU で合計 RTF 0.464、うちボコーダーが 0.432（93%）**、acoustic は 0.006 でした（CPU では合計 0.654）。**acoustic を速くしても end-to-end はほとんど動きません。** また **`realtime_capable` が True でも「リアルタイム」とは書きません** — chunk 境界・audio I/O・連続運転を測っていないためです。
 
@@ -414,7 +414,13 @@ V3.1 の上限を基準にしている**ため、測り直しが済むまで消�
 
 ## ライセンス
 
-コードは MIT です（`LICENSE`）。ただし、同梱のボコーダー ONNX（`checkpoints/nhv_v3_2*.onnx`）、および Release で配布する学習済みモデルとその学習に使った歌声データベースは MIT の対象外で、それぞれのライセンス・規約に従います（下の謝辞、およびモデル配布物の `CREDITS.txt` を参照）。
+コードは MIT です（`LICENSE`）。ただし次のものは MIT の対象外で、それぞれのライセンス・規約に従います。対応表と詳細は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) にまとめてあります。
+
+- **`preprocess/algorithms/base.py` と `preprocess/algorithms/rmvpe.py`** — どちらも [pitch-benchmark](https://github.com/lars76/pitch-benchmark)（MIT, Copyright (c) 2025 Lars Nieradzik）からそのまま取り込んだファイルです。著作権表示は `LICENSES/pitch-benchmark-MIT.txt` にあり、再配布時はこれを保持してください。`base.py` は本リポジトリと同じ MIT です。
+  `rmvpe.py` は違います。中の RMVPE モデルは [上流](https://github.com/Dream-High/RMVPE)が **Apache-2.0** なので、このファイルだけ Apache-2.0 で配布します（全文 `LICENSES/Apache-2.0.txt`）。`to_local_average_cents()` は [CREPE](https://github.com/marl/crepe) 由来で、その MIT 表示は `LICENSES/crepe-MIT.txt` にあります。ウェイト `rmvpe.pt` は初回実行時にダウンロードするもので、本リポジトリには含みません。
+- **デモ・サンプル音声**（`demo/audio/*_gt.ogg`、`notebooks/sample_data/*.wav`） — 合成音ではなく歌声データベースの実録音の抜粋です。各データベースの規約に従います。
+- **同梱のボコーダー ONNX**（`checkpoints/nhv_v3_2*.onnx`） — [NHVSing](https://github.com/wavtechyukky/NHVSing/) の成果物です。
+- **Release で配布する学習済みモデル**とその学習に使った歌声データベース — モデル配布物の `CREDITS.txt` を参照してください。
 
 **SVC 経路の制約はさらに強くなります。** base モデルの学習に **GTSinger（CC BY-NC-SA 4.0、非商用かつ継承）** を使っており、ShareAlike が学習済み重みに及ぶかはライセンス条文からは決まりません。**そのため SVC の重みは配布していません**（研究・個人利用のみという決定。`doc/svc-dataset-ledger.md`）。**ライセンスの整理が済めば公開を検討します**が、**現時点では可否も時期も約束できません** —— GTSinger の ShareAlike の扱い、夏目悠李の規約（成果物由来の音声を機械学習データに使うことを禁じている）、御丹宮くるみの重み配布の記載なし、の 3 点を解く必要があります。また GTSinger は「本人の同意なく特定個人の歌声を生成すること」を禁じており、**声を変換するには target 歌手の同意が要ります**。ソフトウェアのライセンスとは別の話です。詳細は `LICENSE` の SVC 向け NOTICE を参照してください。
 
@@ -427,6 +433,10 @@ V3.1 の上限を基準にしている**ため、測り直しが済むまで消�
 - 波音リツ — https://www.canon-voice.com/voicebanks/
 - Neural Homomorphic Vocoder — https://www.isca-archive.org/interspeech_2020/liu20_interspeech.html
 - dsp（zjlww） — https://github.com/zjlww/dsp
+- pitch-benchmark（Lars Nieradzik。`preprocess/algorithms/` の 2 ファイルはここからの取り込みです） — https://github.com/lars76/pitch-benchmark
+- RMVPE（F0 抽出モデル本体） — https://github.com/Dream-High/RMVPE
+- CREPE（RMVPE 経由で `to_local_average_cents()` を利用） — https://github.com/marl/crepe
+- DiffGAN-TTS（JCU 判別器の設計を参考にしました。コードは自前実装です） — https://github.com/keonlee9420/DiffGAN-TTS
 
 SVC 経路では次も使わせていただいています。
 

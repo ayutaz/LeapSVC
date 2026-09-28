@@ -1,3 +1,53 @@
+# RMVPE pitch estimator (vendored).
+#
+# ---- Provenance --------------------------------------------------------------
+# This file was taken verbatim from pitch-benchmark:
+#
+#     https://github.com/lars76/pitch-benchmark  --  algorithms/rmvpe.py
+#     The MIT License (MIT)
+#     Copyright (c) 2025 Lars Nieradzik
+#
+# Everything here is theirs -- MelSpectrogram, ConvBlockRes, ResEncoderBlock,
+# ResDecoderBlock, Encoder, Intermediate, Decoder, DeepUnet0, BiGRU, E2E0,
+# to_local_average_cents, get_model_path and RMVPEPitchAlgorithm. The full MIT
+# text is in LICENSES/pitch-benchmark-MIT.txt.
+#
+# The model they packaged comes in turn from RMVPE, which is Apache-2.0:
+#
+#     https://github.com/Dream-High/RMVPE
+#     "RMVPE: A Robust Model for Vocal Pitch Estimation in Polyphonic Music"
+#     Haojie Wei, Xueke Cao, Tangpeng Dan, Yueguo Chen
+#     https://arxiv.org/abs/2306.15412
+#
+# and to_local_average_cents originates one step further back, in CREPE:
+#
+#     https://github.com/marl/crepe  --  The MIT License (MIT)
+#     Copyright (c) 2018 Jong Wook Kim
+#
+# ---- License of THIS file ----------------------------------------------------
+# This file is NOT covered by the MIT license that covers the rest of this
+# repository. The RMVPE model code inside it is Apache-2.0 upstream, so the file
+# is distributed under the Apache License, Version 2.0:
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Its conditions are a superset of the MIT conditions above, so complying with it
+# while keeping the two MIT copyright notices satisfies all three upstreams.
+# Full texts: LICENSES/Apache-2.0.txt, LICENSES/pitch-benchmark-MIT.txt,
+# LICENSES/crepe-MIT.txt. See also THIRD_PARTY_NOTICES.md.
+#
+# Unless required by applicable law or agreed to in writing, software distributed
+# under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+# CONDITIONS OF ANY KIND, either express or implied.
+#
+# ---- Modifications (Apache-2.0 section 4(b)) ---------------------------------
+# Modified in 2026 by wavtechyukky: this notice was added. The code is unchanged.
+#
+# ---- Weights -----------------------------------------------------------------
+# rmvpe.pt is NOT redistributed here. get_model_path() downloads it at run time
+# from a third-party mirror. It is a separate work with its own terms -- see
+# THIRD_PARTY_NOTICES.md.
+
 import urllib.request
 from pathlib import Path
 
