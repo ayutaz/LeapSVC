@@ -442,6 +442,20 @@ class SpeakerSimilarityTests(unittest.TestCase):
             return np.asarray(table[float(wav[0])], dtype=np.float32)
         return embed
 
+    def test_report_keeps_one_similarity_per_converted_clip_in_order(self):
+        # 対応のある比較（doc/svc-plan.md 13.2 の guard rail）には clip ごとの値が要る。
+        # 平均しか残らないと、**同じ clip どうしを並べる符号検定ができません。**
+        from tools.speaker_similarity import similarity_report
+        refs = self._wavs(2, seed=1)
+        conv = self._wavs(2, seed=2)
+        table = {float(refs[0][0]): [1.0, 0.0], float(refs[1][0]): [0.0, 1.0],
+                 float(conv[0][0]): [1.0, 0.0], float(conv[1][0]): [1.0, 1.0]}
+        rep = similarity_report(conv, refs, embed=self._embed_from(table), sr=self.SR)
+        # clip 0 は ref0 と一致・ref1 と直交 -> 0.5。clip 1 は両方と 45 度 -> 0.7071。
+        np.testing.assert_allclose(rep["converted_per_clip"], [0.5, 0.70710678], rtol=1e-6)
+        self.assertAlmostEqual(float(np.mean(rep["converted_per_clip"])),
+                               rep["converted_vs_target"]["mean"], places=6)
+
     def test_report_records_the_clip_lengths_it_used(self):
         # 較正は長さに依存する（6 秒では通らない）。あとから報告を読む人が、
         # その数値が較正の内側で出たのかを判断できなければならない。
