@@ -176,7 +176,7 @@ Python 3.13 / torch 2.13 / librosa 1.0 へ更新した後、次を上記環境�
 
 - ボコーダーは **NHVSing V3.1**（`checkpoints/nhv_v3_1.onnx`。2026-09-13 に上流から取り込み）。**M5 の測定値は V3 で取ったもの**なので、V3.1 で測り直した値と混ぜないこと。**2026-09-18 に上流の V3.2 を取り込みましたが、SVC の既定は V3.1 据え置きです（実測で決定）** — 26 clip を CPU で 3 run 回し（V3.1 を 2 回 + V3.2、mel は bit 一致）、**音量の揺れは改善しませんでした**（改善側が過半になった量は無く、上限の `frame_jitter_db` は 6/26・p = 0.0094 で有意に悪化。ただし +0.035 dB で無視できる大きさ）。**「聴取で報告された『音量が揺れる』を V3.2 が直す」という仮説は支持されませんでした。** 一次データ `out/m5/_v32/loudness_compare.json`、判定規則は [実行計画](svc-plan.md) 10 節。
 - **同梱ボコーダー 4 ファイルは省メモリ版の書き出し**（2026-09-29 取り込み、NHVSing 8e804b2、重みは同じ）。旧い書き出しと出力が一致し（乱数を固定して SNR 142 dB）、ピーク commit は 0.84 GB/音声秒から約 18 MB/秒になりました。**上限は変わらないので M5 の数値は測り直し不要**です。[実行計画](svc-plan.md#12-上流の省メモリ書き出しの取り込み2026-09-29)。
-- 自動テスト **527 件**が成功（`test_svc_model` 71 / `test_svc_preprocess` 118 / `test_svc_dataset` 82 / `test_svc_metrics` 256）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
+- 自動テスト **543 件**が成功（`test_svc_model` 72 / `test_svc_preprocess` 125 / `test_svc_dataset` 86 / `test_svc_metrics` 260）。重いモデルもネットワークも使いません。実モデルの統合テストは 4 件で、`LEAPSINGER_INTEGRATION=1` のときだけ走ります。
 - コマンド guard の回帰テスト **55 件**（`tools/hooks/test_guard.py`）。止めすぎ検出のため、通ってほしいケースも同数以上入れています。
 - **実音声 5 コーパスへの検査・coverage・split**（M0。下記「M0 の実データ検証」）。
 - padding された frame が有効 frame に影響しないこと。

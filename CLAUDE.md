@@ -97,7 +97,7 @@ SVC: source WAV -> content/F0/UV/loudness -> LeapSVC -> mel + F0 -> NHVSing -> W
 
 `run_smoke.py` は 3rd-party API・学習・自動再開・推論・ボコーダー・前処理・ONNX 書き出しまでを 1 コマンドで通し、終了コードが失敗ステージ数になります。**依存やバージョンを変えた後、環境を移した後、学習を始める前に必ず走らせること。** 入力は合成波形なので品質の検証にはならず、配線が壊れていないことだけを示します。
 
-単体テストは **527 件**（`test_svc_model` 71 / `test_svc_preprocess` 118 / `test_svc_dataset` 82 / `test_svc_metrics` 256）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
+単体テストは **543 件**（`test_svc_model` 72 / `test_svc_preprocess` 125 / `test_svc_dataset` 86 / `test_svc_metrics` 260）で、重いモデルもネットワークも使いません。`unittest discover` は hook で止めています（収集条件が暗黙で、走った件数が分かりにくいため）。上の 4 本を明示的に並べるか、`run_smoke.py` の `unittest` ステージを使ってください。後者は top-level の `test_*.py` を自動収集し、件数を表示します。`uv` を介さず素の Python で走らせると `librosa` 等が無く収集時に失敗します。
 
 ONNX 書き出し（SVS のみ。実験的）。**OpenUTAU voicebank 書き出しは上流で削除されました**（2026-09-13 に取り込み。`export/dsconfig.py` と `export/openutau_assets.py` は存在しません）:
 
@@ -220,7 +220,7 @@ hook が止めるもの: `uv pip` / 素の `pip` / 素の `python`（**`-m` と 
 | `lock` | ubuntu | `uv lock --check`（**lock はコミット対象**なので、忘れを止める） |
 | `lint` | ubuntu | `uvx ruff@<pyproject の pin> check .`。**版は pyproject から採る**ので真実の在処が 1 つ |
 | `guard` | ubuntu | `tools/hooks/test_guard.py`（55 件）。stdlib だけなので `--no-project` |
-| `tests` | **macOS** | `uv sync --locked` + 単体テスト 527 件 + ruff + リンク検査 |
+| `tests` | **macOS** | `uv sync --locked` + 単体テスト 543 件 + ruff + リンク検査 |
 
 **単体テストを Linux で回していません（理由を残します）。** pyproject は Linux / Windows の
 torch を **CUDA index (cu130)** に固定していて、lock 上の torch + nvidia wheel は **4.23 GB**
@@ -462,7 +462,7 @@ RMVPE を fake するときは **`RMVPEPitchAlgorithm` を継承すること**�
 すり抜けます。**くるみの chunk の 10%**（偽の有声 59,879 フレーム、F0 中央値 95 Hz）と夏目の
 3 chunk が入っていました。リツと GTSinger は 0 です。**絶対音量のしきい値では分けられません**
 （録音ごとに音量が 20 dB 違い、無音側の p99 −66.2 dBFS と歌唱側の p0.1 −74.7 dBFS が重なる）。
-直すなら曲の歌っている部分からの**相対値**です。**相対値も事前登録した規則では 0.7 dB 重なりました**（無音側 p1 55.8 dB 対 くるみの歌唱側 p99.9 56.5 dB。ほかの 24 shard は 46.5 dB 以下）。くるみの裾は同じ持続音の第 3 倍音（約 142 Hz）と見られます（事後の分析）。実装は `out/m5/_f0clip/silence_gate_pending/` に保存したまま、要ユーザー判断です（doc/svc-plan.md 13.3 / 13.5）。
+**2026-09-29 に相対値のゲートを入れました**（`preprocess/svc/silence.py`。入力全体の歌唱音量 = 50 ms 窓 RMS の p90 から **51 dB** 以上小さいフレームを無声にし、前処理と `svc_convert` / `svc_batch` に同じ関数を当てる）。学習に入っていた無音 73 chunk はゲート後に 0 になります。**ただし既存の shard と checkpoint は作り直していない**ので、次の作り直しまで学習と推論で F0 の作り方が食い違います（51 dB 以上小さいフレームだけ）。test set では 6 clip・29 フレームが変わります。**相対値も事前登録した規則では 0.7 dB 重なりました**（無音側 p1 55.8 dB 対 くるみの歌唱側 p99.9 56.5 dB。ほかの 24 shard は 46.5 dB 以下）。くるみの裾は同じ持続音の第 3 倍音（約 142 Hz）と見られます（事後の分析）。実装は **利用者の決定で規則を覆して 51 dB にしました**（doc/svc-plan.md 13.3 / 13.5）。
 **抜粋を聴かずに「音量は周りと同じ」と読みました** ―― 比べる基準にした「同じ chunk の有声
 フレーム」自体が同じ無音でした。**比較の基準は、測りたい量から独立に取ること。**
 - **`download/ritsu`（kire）は normal の重複です（2026-09-29 確認）。** WAV 50 本がバイト単位で
@@ -470,7 +470,7 @@ RMVPE を fake するときは **`RMVPEPitchAlgorithm` を継承すること**�
 **フォルダリンク**で、中の 5 つの zip（Normal / Soft / 無印 / Ver2.0.2 / Ver2）をすべて展開して
 Normal を置いていました。**学習は normal を 2 倍の重みで行い、kire は未使用**です。
 「リツ 3 音源・10.41 時間」は **2 音源・重複を除いて 6.90 時間**が正しい値です。曲名も同じなので
-**leakage はありません**。直すかは要ユーザー判断（次の作り直しとセット。doc/svc-plan.md 13.4）。
+**leakage はありません**。**取得は 2026-09-29 に直しました** ―― kire は無印 Ver2.0.2 の zip 1 本（110 本・7.49 h。版表記なしの zip は 60 曲の古い版）で、`DATABASE` が複数あるか曲数が合わなければ止まります。取得済みの kire は `out/m5/_ritsu_kire/` にあり、**`download/ritsu` は M5 の test set が参照しているので触っていません**。学習への反映は次の作り直しで（doc/svc-plan.md 13.4）。
 - **`nhv_v3_2_1.onnx`（PrettyPitch に同梱の試験運転版）は取り込んでいません（2026-09-29）。**
 V3.2 を追加学習したもので、GT mel の再合成（`tools/nhv_indist.py`、5 コーパス × 12 clip）では
 mel L1 が V3.2 より **clip ごとの差の中央値で −0.023**（57/60 で改善、p < 1e-4。同じ V3.1 を

@@ -201,7 +201,7 @@ extra は毎回すべて並べてください。実行は `uv run python ...`、
     uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics
     uv run ruff check .
 
-単体テストは **527 件**で、重いモデルもネットワークも使いません。`run_smoke.py` の入力は
+単体テストは **543 件**で、重いモデルもネットワークも使いません。`run_smoke.py` の入力は
 合成波形なので、**品質の検証にはならず**、配線が壊れていないことだけを示します。
 
 ## 既定値と注意点（すべて実測）

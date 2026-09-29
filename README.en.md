@@ -212,7 +212,7 @@ charged as content degradation) or which has fewer than 3 clips.
     uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics
     uv run ruff check .
 
-There are **527 unit tests**, none of which need heavy models or network access. `run_smoke.py`
+There are **543 unit tests**, none of which need heavy models or network access. `run_smoke.py`
 feeds synthetic waveforms, so it **proves the wiring, never the quality**.
 
 ## Defaults and caveats (all measured)
