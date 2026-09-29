@@ -802,6 +802,82 @@ class RmvpeF0ClipTests(unittest.TestCase):
         self.assertLess(cls.__mro__.index(NativeGridClip), cls.__mro__.index(RMVPEPitchAlgorithm))
 
 
+class SilenceGateTests(unittest.TestCase):
+    """入力の**歌唱音量からの相対値**で無音フレームを無声にする（doc/svc-plan.md 13.5）。
+
+    `extract_f0_rmvpe` は chunk ごとにピークで正規化するので、無音の chunk は録音の持続音が
+    持ち上げられて有声と判定され、くるみの chunk の 10% が F0 付きの無音として学習に
+    入っていました。**絶対音量のしきい値は使えません**（13.3）―― 録音ごとに 20 dB 違い、
+    大きい録音の無音と小さい録音の歌声が重なるためです。
+    """
+
+    SR, HOP = 44100, 256
+
+    def _sine(self, seconds, amp):
+        t = np.arange(int(seconds * self.SR)) / self.SR
+        return (amp * np.sin(2 * np.pi * 220.0 * t)).astype(np.float32)
+
+    def test_the_singing_level_is_the_loud_part_of_the_input(self):
+        from preprocess.svc.silence import singing_level_db
+        w = np.concatenate([self._sine(8.0, 0.5), np.zeros(2 * self.SR, np.float32)])
+        # 振幅 0.5 の正弦波の RMS は -9.03 dBFS。無音の 2 秒に引っぱられない
+        self.assertAlmostEqual(singing_level_db(w, self.SR), -9.03, delta=0.1)
+
+    def test_frames_far_below_the_reference_become_unvoiced(self):
+        from preprocess.svc.silence import gate_silence, singing_level_db
+        w = np.concatenate([self._sine(1.0, 0.5), self._sine(1.0, 0.5e-4)])   # 後半は 80 dB 下
+        n = len(w) // self.HOP
+        f0, uv = np.full(n, 200.0, np.float32), np.ones(n, np.float32)
+        g0, gu = gate_silence(f0, uv, w, hop=self.HOP, ref_db=singing_level_db(w, self.SR),
+                              gap_db=40.0)
+        self.assertTrue((gu[: n // 2 - 8] == 1.0).all())
+        self.assertTrue((g0[: n // 2 - 8] == 200.0).all())
+        self.assertTrue((gu[n // 2 + 8:] == 0.0).all())
+        self.assertTrue((g0[n // 2 + 8:] == 0.0).all())
+
+    def test_a_quietly_recorded_singer_is_not_gated(self):
+        # 全体が -69 dBFS の録音。絶対音量なら消えるが、自分の歌唱音量が基準なら残る
+        from preprocess.svc.silence import gate_silence, singing_level_db
+        w = self._sine(2.0, 0.5e-3)
+        n = len(w) // self.HOP
+        _, gu = gate_silence(np.full(n, 200.0, np.float32), np.ones(n, np.float32), w,
+                             hop=self.HOP, ref_db=singing_level_db(w, self.SR), gap_db=40.0)
+        self.assertTrue((gu == 1.0).all())
+
+    def test_the_wrapper_gates_a_chunk_against_the_whole_input(self):
+        # 推論も前処理も chunk ごとに F0 を取るが、基準は入力全体。chunk だけ見ると無音が分からない
+        from preprocess.svc.silence import silence_gated, singing_level_db
+        loud, quiet = self._sine(2.0, 0.5), self._sine(2.0, 0.5e-4)
+
+        def fake(wav, sr, hop):
+            n = len(wav) // hop
+            return np.full(n, 200.0, np.float32), np.ones(n, np.float32)
+
+        f0x = silence_gated(fake, ref_db=singing_level_db(np.concatenate([loud, quiet]), self.SR),
+                            gap_db=40.0)
+        self.assertTrue((f0x(loud, self.SR, self.HOP)[1][:-8] == 1.0).all())
+        self.assertTrue((f0x(quiet, self.SR, self.HOP)[1][8:] == 0.0).all())
+
+    def test_the_manifest_records_the_rule(self):
+        from preprocess.svc.silence import silence_gate_manifest
+        m = silence_gate_manifest(45.0)["f0_silence_gate"]
+        self.assertEqual(m["gap_db"], 45.0)
+        self.assertIn("p90", m["reference"])
+
+    def test_the_default_gap_is_the_one_decided_in_the_plan(self):
+        # doc/svc-plan.md 13.5: 規則では 0.7 dB 重なったが、利用者の決定で覆して 51 dB
+        from preprocess.svc.silence import SILENCE_GAP_DB
+        self.assertEqual(SILENCE_GAP_DB, 51.0)
+
+    def test_every_svc_extraction_path_is_gated(self):
+        # 前処理と推論の両方に同じゲートが掛からないと、学習と推論で F0 の作り方が食い違う
+        root = Path(__file__).resolve().parent
+        for rel in ("preprocess/svc/run.py", "tools/svc_convert.py", "tools/svc_batch.py"):
+            with self.subTest(rel=rel):
+                self.assertTrue("silence_gated(" in (root / rel).read_text(encoding="utf-8"),
+                                f"{rel} の F0 抽出に無音ゲートが掛かっていません")
+
+
 class ExtractF0CallerTests(unittest.TestCase):
     """`extract_f0_rmvpe` から fmin / fmax が消えた（上流 9ceca86）。
 

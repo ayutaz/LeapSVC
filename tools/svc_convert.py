@@ -165,6 +165,7 @@ def main() -> int:
     from preprocess.svc.extract import _resample, extract_phrase, transpose_f0
     from preprocess.svc.loudness import frame_log_rms, loudness_match_gain
     from preprocess.svc.shard import features_to_item
+    from preprocess.svc.silence import SILENCE_GAP_DB, silence_gated, singing_level_db
 
     mel = MelSpec()
     out_dir = Path(a.out); out_dir.mkdir(parents=True, exist_ok=True)
@@ -212,13 +213,16 @@ def main() -> int:
               f"(学習分布から {(before - manifest['loudness_mean']) / sd:+.2f} -> "
               f"{(after - manifest['loudness_mean']) / sd:+.2f} sigma)", flush=True)
 
+    # **無音ゲートの基準は変換する入力全体**（音量を合わせた後）。前処理と同じ規則
+    # （doc/svc-plan.md 13.5）で、chunk だけでは無音かどうか分からない。
+    f0_in = silence_gated(f0x, ref_db=singing_level_db(wav, mel.sr), gap_db=SILENCE_GAP_DB)
     step = int(a.chunk_sec * mel.sr)
     pieces, gt_pieces, t0 = [], [], time.time()
     for i, s in enumerate(range(0, len(wav), step)):
         seg = np.ascontiguousarray(wav[s:s + step])
         if len(seg) < mel.hop * 4:
             break
-        feats = extract_phrase(seg, mel.sr, content_encoder=encoder, f0_extract=f0x, mel=mel)
+        feats = extract_phrase(seg, mel.sr, content_encoder=encoder, f0_extract=f0_in, mel=mel)
         feats["f0_hz"] = transpose_f0(feats["f0_hz"], a.transpose)
         item = features_to_item(feats, manifest)
         item["spk_id"] = int(a.spk_id)

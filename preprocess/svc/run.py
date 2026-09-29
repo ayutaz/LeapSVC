@@ -31,6 +31,7 @@ from .encoders import ContentVecEncoder, RmvpeF0
 from .extract import extract_phrase
 from .loudness import loudness_manifest
 from .shard import build_shard
+from .silence import SILENCE_GAP_DB, silence_gate_manifest, silence_gated, singing_level_db
 
 # npz の key（`<name>|content`）とファイル名に使えない文字だけを落とす。
 # **CJK は残す。** ASCII だけに削ると日本語題の曲がすべて同じ名前に潰れ、曲単位 split が
@@ -156,11 +157,13 @@ def stage_extract(args, mel: MelSpec) -> Path:
         if wav.ndim > 1:
             wav = wav.mean(axis=1)
         song = song_name(path, wav_root, args.song_parts)
+        # **無音ゲートの基準は曲ファイル全体**（chunk だけでは無音かどうか分からない）
+        f0_file = silence_gated(f0x, ref_db=singing_level_db(wav, sr), gap_db=SILENCE_GAP_DB)
         spans = chunk_spans(len(wav), sr, chunk_sec=args.chunk_sec, min_sec=args.min_sec)
         kept = 0
         for a, b in spans:
             out = extract_phrase(np.ascontiguousarray(wav[a:b]), sr,
-                                 content_encoder=encoder, f0_extract=f0x, mel=mel)
+                                 content_encoder=encoder, f0_extract=f0_file, mel=mel)
             # 無声だけの chunk を捨てる。曲を先頭から固定長で切るとイントロや間奏が
             # 丸ごと無声の phrase になり、学習に入れると「無音を出す」ことを学ぶ。
             if voiced_ratio(out["uv"]) < args.min_voiced:
@@ -187,7 +190,8 @@ def stage_extract(args, mel: MelSpec) -> Path:
                     "min_voiced": args.min_voiced, "skipped_unvoiced": n_skipped,
                     "mel": mel.to_dict(),
                     **loudness_manifest(hop=mel.hop, n_fft=mel.n_fft),
-                    **encoder.manifest(), **f0x.manifest()},
+                    **encoder.manifest(), **f0x.manifest(),
+                    **silence_gate_manifest(SILENCE_GAP_DB)},
                    ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"[extract] {len(wavs)} files -> {n_phrases} phrases "
           f"({n_skipped} 無声で除外)  {time.time() - t0:.0f}s  -> {cache}")
