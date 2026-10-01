@@ -344,7 +344,7 @@ Run Python with `uv run python ...` and add dependencies with `uv add <package>`
       uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 - **F0 extraction (RMVPE)** weights download automatically on first run (HuggingFace → `preprocess/algorithms/rmvpe.pt`).
 - **The vocoder (NHVSing)** is bundled as ONNX under `checkpoints/`; no extra download is needed.
-- **The acoustic model itself is distributed via Releases** (not included in the repo).
+- **The acoustic model itself (SVS) is distributed via the upstream [LeapSinger Releases](https://github.com/wavtechyukky/LeapSinger/releases)** (not included in the repo). **This repository's (LeapSVC's) Releases contain no weights** (`.github/workflows/release.yml`: the code sdist / wheel only).
 
 #### Configuration
 
@@ -393,7 +393,7 @@ Running the same command again automatically resumes from where it stopped.
 
 For speaker handling (bake / embed / none) and other details, see "Export to ONNX" below.
 
-You can try the whole flow — from export to use — in a notebook. Download the model from the Release and place it in `notebooks/sample_data/` (see `place_model_here.txt` in that folder).
+You can try the whole flow — from export to use — in a notebook. Download the model from the upstream LeapSinger Release and place it in `notebooks/sample_data/` (see `place_model_here.txt` in that folder).
 
     notebooks/export_and_use_onnx.ipynb
 

@@ -330,7 +330,7 @@ Python の実行は `uv run python ...`、依存の追加は `uv add <package>` 
       uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 - **F0抽出（RMVPE）** の重みは初回実行時に自動ダウンロードされます（HuggingFace → `preprocess/algorithms/rmvpe.pt`）。
 - **ボコーダー（NHVSing）** は `checkpoints/` に ONNX 同梱済みで、追加ダウンロード不要です。
-- 学習・配布用の**音響モデル本体は Release で配布**しています（リポには含みません）。
+- 学習・配布用の**音響モデル本体（SVS）は fork 元 [LeapSinger の Release](https://github.com/wavtechyukky/LeapSinger/releases) で配布**されています（リポには含みません）。**このリポジトリ（LeapSVC）の Release は重みを含みません**（`.github/workflows/release.yml`。コードの sdist / wheel のみ）。
 
 #### config設定
 
@@ -379,7 +379,7 @@ F0の抽出にはRMVPEを使います（RMVPEはマルチプロセスで動か�
 
 話者の指定（bake / embed / なし）など詳しい説明は、下の「ONNX への書き出し」を参照してください。
 
-ノートブックで、書き出しから利用まで一通り試すことができます。必要なモデルは Release からダウンロードして `notebooks/sample_data/` に置いてください（詳しくは同フォルダの `place_model_here.txt`）。
+ノートブックで、書き出しから利用まで一通り試すことができます。必要なモデルは fork 元 LeapSinger の Release からダウンロードして `notebooks/sample_data/` に置いてください（詳しくは同フォルダの `place_model_here.txt`）。
 
     notebooks/export_and_use_onnx.ipynb
 
