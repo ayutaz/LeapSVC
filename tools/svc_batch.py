@@ -127,6 +127,7 @@ def _convert_one(job: Job, m: dict[str, Any], *, a, manifest: dict[str, Any]) ->
     from infer import infer_svc_mel, mel_to_wav
     from preprocess.svc.extract import _resample, extract_phrase, transpose_f0
     from preprocess.svc.shard import features_to_item
+    from preprocess.svc.silence import SILENCE_GAP_DB, silence_gated, singing_level_db
     from tools.audio_metrics import band_profile
     from tools.svc_convert import output_stem
 
@@ -143,6 +144,8 @@ def _convert_one(job: Job, m: dict[str, Any], *, a, manifest: dict[str, Any]) ->
         wav = np.ascontiguousarray(wav[a0:a1])
 
     # **音量を触らない**（svc_convert.py と同じ契約）。学習は生の音量で特徴を取る。
+    # 無音ゲートの基準は変換する入力全体（doc/svc-plan.md 13.5。svc_convert.py と同じ）。
+    f0_in = silence_gated(m["f0x"], ref_db=singing_level_db(wav, mel.sr), gap_db=SILENCE_GAP_DB)
     step = int(a.chunk_sec * mel.sr)
     pieces, gt_pieces = [], []
     for s in range(0, len(wav), step):
@@ -150,7 +153,7 @@ def _convert_one(job: Job, m: dict[str, Any], *, a, manifest: dict[str, Any]) ->
         if len(seg) < mel.hop * 4:
             break
         feats = extract_phrase(seg, mel.sr, content_encoder=m["encoder"],
-                               f0_extract=m["f0x"], mel=mel)
+                               f0_extract=f0_in, mel=mel)
         feats["f0_hz"] = transpose_f0(feats["f0_hz"], float(job.get("transpose", 0)))
         item = features_to_item(feats, manifest)
         item["spk_id"] = int(a.spk_id)

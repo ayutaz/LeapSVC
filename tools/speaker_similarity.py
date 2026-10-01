@@ -119,7 +119,10 @@ def similarity_report(converted: Sequence[np.ndarray], target_refs: Sequence[np.
 
     # **較正は長さに依存する。** 後から読む人が「較正の内側で出た値か」を判断できるよう残す。
     seen = [len(w) / sr for w in (list(converted) + list(target_refs) + list(unrelated or []))]
+    # clip ごとの値（参照との cos の平均）。対応のある比較に要る。並びは converted と同じ。
+    per_clip = [float(np.mean([cosine(c, r) for r in ref_e])) for c in conv_e]
     out: dict[str, Any] = {"converted_vs_target": _agg(conv),
+                           "converted_per_clip": per_clip,
                            "target_self_ceiling": _agg(ceiling),
                            "unrelated_floor": _agg(floor), "recovery": None,
                            "clip_seconds": {"min": float(min(seen)), "max": float(max(seen)),

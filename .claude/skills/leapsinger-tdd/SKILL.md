@@ -10,7 +10,7 @@ description: このリポジトリで実装を書くときの TDD の当て方�
 ## 1. テストの置き場と実行
 
 ```bash
-uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics -v   # 単体 527 件
+uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics -v   # 単体 543 件
 uv run python -m unittest test_svc_model.HarmonicSVCModelTests.test_single_item_inference_contract
 uv run python tools/hooks/test_guard.py                      # hook の回帰 55 件
 LEAPSINGER_INTEGRATION=1 uv run python -m unittest test_svc_preprocess_integration   # 実モデル
@@ -111,6 +111,9 @@ clip 単位では 2 勝 2 敗 2 分（p = 1.0）**です。
 2. **規則に対応のある検定を入れる。** **中央値だけを見る規則はこの壊れ方を通します。**
 3. **規則の機械的な出力に従えないときは、理由を書いて従わない。** 黙って読み替えたり、
    ノイズに従って既定を変えたりしない。
+4. **「悪化」の定義に大きさの下限を入れる**（2026-10-01）。V3.2.1 の guard rail は「符号検定 p < 0.05
+   かつ run 間ノイズ超え」だけで、**F0 誤差 +0.1 セント**（聴いて分かる大きさの数十分の 1）で落ちました。
+   ノイズがごく小さい指標では、無視できる差でも両方の条件を満たします。**指標ごとに意味のある最小の差**を書く。
 
 ## 4. やりがちな失敗
 

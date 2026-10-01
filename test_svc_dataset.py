@@ -720,3 +720,64 @@ class GTSingerPickWavsTests(unittest.TestCase):
         from tools.m3_corpus import pick_wavs
         self.assertEqual(pick_wavs(self._files(), ["Japanese"], 7),
                          pick_wavs(self._files(), ["Japanese"], 7))
+
+
+def _ritsu_downloader():
+    """取得スクリプトは兄弟 import（`from _gdrive import ...`）なので、そのディレクトリを通す。"""
+    import importlib
+    import sys
+    from pathlib import Path
+    d = str(Path(__file__).resolve().parent / "preprocess" / "download_scripts")
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    return importlib.import_module("download_ritsu")
+
+
+class RitsuDownloadSourceTests(unittest.TestCase):
+    """**kire（無印）は、長いあいだ normal の重複でした**（doc/svc-plan.md 13.4）。
+
+    kire は Drive の**フォルダリンク**で、中に Normal / Soft / 無印 / Ver2.0.2 / Ver2 の
+    5 つの zip があり、全部を展開してから名前順で最初の `DATABASE`（Normal のもの）を
+    黙って選んでいました。M3 / M4 の manifest で sha256 が一致して発覚しています。
+    """
+
+    def test_every_voice_is_one_distinct_zip(self):
+        # フォルダリンクだと、別の音源の zip まで一緒に落ちてくる
+        src = _ritsu_downloader().RITSU_SOURCES
+        self.assertEqual(set(src), {"kire", "normal", "soft"})
+        self.assertFalse(any(is_folder for _, is_folder in src.values()), src)
+        self.assertEqual(len({drive_id for drive_id, _ in src.values()}), 3, src)
+
+    def test_more_than_one_database_is_refused(self):
+        # 複数の音源を展開してしまったら、**どれかを黙って選ばない**
+        import tempfile
+        from pathlib import Path
+        find = _ritsu_downloader()._find_database
+        with tempfile.TemporaryDirectory() as t:
+            for name in ("a/DATABASE", "b/DATABASE_soft"):
+                song = Path(t) / name / "song"
+                song.mkdir(parents=True)
+                (song / "song.wav").write_bytes(b"")
+            with self.assertRaises(ValueError):
+                find(Path(t))
+
+    def test_the_song_count_is_checked_per_voice(self):
+        # kire が normal の 50 曲になっていたのを、取得の時点で止める（無印 Ver2.0.2 は 110 本）
+        R = _ritsu_downloader()
+        R.check_song_count("kire", 110)
+        R.check_song_count("normal", 50)
+        R.check_song_count("soft", 50)
+        with self.assertRaises(ValueError):
+            R.check_song_count("kire", 50)
+        with self.assertRaises(ValueError):
+            R.check_song_count("kire", 60)      # 無版表記の古い zip
+
+    def test_a_single_database_is_found(self):
+        import tempfile
+        from pathlib import Path
+        find = _ritsu_downloader()._find_database
+        with tempfile.TemporaryDirectory() as t:
+            song = Path(t) / "x" / "DATABASE" / "song"
+            song.mkdir(parents=True)
+            (song / "song.wav").write_bytes(b"")
+            self.assertEqual(find(Path(t)).name, "DATABASE")

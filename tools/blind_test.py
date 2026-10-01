@@ -217,6 +217,26 @@ QUESTIONS: dict[str, dict[str, Any]] = {
         # 揺れは source と比べれば分かる。target 本人の録音は要らない。
         "needs_target_ref": False,
     },
+    # **ボコーダーだけが違うペア**（doc/svc-plan.md 13.2、V3.1 対 V3.2.1）。acoustic は
+    # CPU で bit 一致させてあるので、聞くのは波形化の出来だけです。M5 の preference と
+    # 保存先を分けないと、**同じ pair 名に前回の票が黙って埋まります**。
+    "vocoder": {
+        "title": "blind vocoder test（ボコーダーの音質）",
+        "lead": "同じ 1 本の歌を、同じ音響モデルの出力から 2 つのボコーダーで波形にしたものです。"
+                "どちらがどちらかは表示されません。",
+        "note": ('<b>聞くのは音質だけです。</b> 声の中身（歌い方・音程・発音）は同じなので、'
+                 '<b>こもり</b>（高域が足りない）、<b>ざらつき・ノイズ</b>、<b>金属的な響き</b>、'
+                 '<b>ぶつぶつ途切れる / 音量が細かく揺れる</b>が少ないほうを選んでください。<br>'
+                 '<b>誰に似ているかでは選ばないでください</b>（別の指標で測ります）。'
+                 '音量は揃えてあります。<br>'
+                 '<b>引き分けは空欄ではなく tie。</b> 集計が区別します'
+                 '（差が無かったこと自体が結果です）。'
+                 '<code>key.json</code> は集計まで開かないでください。'),
+        "vote_a": "A の音質が良い", "vote_b": "B の音質が良い",
+        "storage": "leapsinger-blind-votes-vocoder",
+        "sheet": "out/m5/_v321/blind/sheet.csv",
+        "needs_target_ref": False,
+    },
 }
 
 

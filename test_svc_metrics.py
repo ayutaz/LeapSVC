@@ -1677,6 +1677,42 @@ class BlindWobbleQuestionTests(unittest.TestCase):
         self.assertEqual(r["question"], "wobble")
 
 
+class BlindVocoderQuestionTests(unittest.TestCase):
+    """**ボコーダーの音質だけを聞く質問**（doc/svc-plan.md 13.2、V3.1 対 V3.2.1）。
+
+    acoustic は bit 一致させてあり、違うのは波形化だけです。M5 の preference と同じ
+    保存先を使うと、**前回の 26 票が同じ pair 名で黙って埋まります。**
+    """
+
+    ROWS = [{"pair": "pair00", "clip": "unseen17"},
+            {"pair": "pair01", "clip": "unseen04"}]
+
+    def test_the_vocoder_question_is_registered(self):
+        from tools.blind_test import QUESTIONS
+        self.assertIn("vocoder", QUESTIONS)
+        self.assertFalse(QUESTIONS["vocoder"]["needs_target_ref"])
+
+    def test_the_vocoder_question_asks_about_sound_quality_not_similarity(self):
+        from tools.blind_test import listen_page
+        html = listen_page(self.ROWS, question="vocoder")
+        self.assertIn("音質", html)
+        self.assertNotIn("A が似ている", html)
+
+    def test_every_question_has_its_own_vote_storage_and_sheet(self):
+        # 質問を足すたびに対を並べ直さなくて済むよう、**全質問**で一意であることを見る。
+        from tools.blind_test import QUESTIONS
+        storages = [q["storage"] for q in QUESTIONS.values()]
+        sheets = [q["sheet"] for q in QUESTIONS.values()]
+        self.assertEqual(len(set(storages)), len(QUESTIONS), storages)
+        self.assertEqual(len(set(sheets)), len(QUESTIONS), sheets)
+
+    def test_tally_accepts_the_vocoder_question(self):
+        from tools.blind_test import tally
+        sheet = [{"pair": "pair00", "clip": "unseen17", "vote": "A",
+                  "A": "v31", "B": "v321"}]
+        self.assertEqual(tally(sheet, question="vocoder")["question"], "vocoder")
+
+
 class BlindSimilarityPageTests(unittest.TestCase):
     """**質問が違えば別の test です。** preference の票が混ざらないことが最優先の契約。"""
 
