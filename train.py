@@ -296,6 +296,20 @@ def perf_line(s: dict) -> str:
     return line
 
 
+def _reject_unsupported_svc_options(is_svc: bool, tr: dict, dcfg: dict) -> None:
+    """SVC の経路が黙って無視する設定を、学習を始める前に止める。
+
+    online `pitch_aug` は特徴量が事前計算済みなので効かない。`data.eval_dbs` は
+    `LeapSingerDataset` にしか渡らないので、SVC で書いても split が変わらない。
+    """
+    if not is_svc:
+        return
+    if tr.get("pitch_aug", False):
+        raise SystemExit("SVC feature training does not support online pitch_aug; augment before extraction")
+    if dcfg.get("eval_dbs") is not None:
+        raise SystemExit("data.eval_dbs is SVS-only; the SVC split ignores it (use eval_songs)")
+
+
 def _loader_kwargs(device, num_workers: int) -> dict:
     """DataLoader の追加引数。**pin_memory は CUDA のときだけ有効にする。**
 
@@ -348,8 +362,10 @@ def main():
             style_map.setdefault(dbname, int(rr.get("style_id", 0)))
     print(f"[spk_map] {spk_map}\n[style_map] {style_map}")
     is_svc = cfg["model"].get("arch") == "svc"
-    if is_svc and tr.get("pitch_aug", False):
-        raise SystemExit("SVC feature training does not support online pitch_aug; augment before extraction")
+    _reject_unsupported_svc_options(is_svc, tr, dcfg)
+    eval_dbs = dcfg.get("eval_dbs")
+    if eval_dbs is not None and not eval_dbs:
+        raise ValueError("data.eval_dbs が空です（eval split が空になります）")
     if is_svc:
         train_ds = SVCFeatureDataset(
             args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
@@ -357,6 +373,7 @@ def main():
     else:
         train_ds = LeapSingerDataset(
             args.data_dirs, "train", eval_songs=dcfg.get("eval_songs", 2),
+            eval_dbs=eval_dbs,
             min_sec=dcfg.get("min_sec", 0.3), pitch_aug=tr.get("pitch_aug", False),
             silence=dcfg.get("silence", True),
             silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),
@@ -457,6 +474,7 @@ def main():
     else:
         eval_ds = LeapSingerDataset(
             args.data_dirs, "eval", eval_songs=dcfg.get("eval_songs", 2),
+            eval_dbs=eval_dbs,
             min_sec=dcfg.get("min_sec", 0.3),
             silence=dcfg.get("silence", True),
             silence_fade_sec=dcfg.get("silence_fade_sec", 0.05),

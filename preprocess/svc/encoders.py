@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 from pathlib import Path
 from typing import Any
@@ -75,22 +76,67 @@ class ContentVecEncoder:
         }
 
 
+class NativeGridClip:
+    """RMVPE の**ネイティブ格子**で、有声フレームの F0 を `[fmin, fmax]` に clip する mixin。
+
+    上流は 9ceca86 でこの clip を外しました（範囲外の値が捨てられずに境界へ張り付き、
+    平坦な音を作るため）。SVS はそれに従います。**SVC は既存の shard と checkpoint が
+    この clip 込みの F0 で作られているので、bit 一致を保つために残します。**
+
+    旧実装の clip は `_sanity_check`、つまり mel 格子への補間の**前**に掛かっていました。
+    `extract_f0_rmvpe` の結果を後から clip しても一致しないので、同じ段に差し込みます。
+    """
+
+    def _sanity_check(self, pitch, periodicity):
+        pitch, periodicity = super()._sanity_check(pitch, periodicity)
+        voiced = periodicity > 0
+        pitch[voiced] = np.clip(pitch[voiced], self.fmin, self.fmax)
+        return pitch, periodicity
+
+
+@functools.cache
+def clipped_rmvpe_class():
+    """`NativeGridClip` を掛けた RMVPE。torch を import するので初回呼び出しまで遅らせる。"""
+    from preprocess.algorithms.rmvpe import RMVPEPitchAlgorithm
+
+    class ClippedRMVPE(NativeGridClip, RMVPEPitchAlgorithm):
+        pass
+
+    return ClippedRMVPE
+
+
+# 既定の RMVPE は重み（181 MB）を読むので、同じ条件なら使い回す（旧 `_get_algo` と同じ扱い）。
+_CLIPPED_CACHE: dict = {}
+
+
+def _default_algo(**kw):
+    key = tuple(sorted(kw.items()))
+    if key not in _CLIPPED_CACHE:
+        _CLIPPED_CACHE[key] = clipped_rmvpe_class()(**kw)
+    return _CLIPPED_CACHE[key]
+
+
 class RmvpeF0:
     """`extract_phrase(f0_extract=...)` の形に合わせた RMVPE の薄い包み。
 
     **確認済み:** `extract_f0_rmvpe` は mel と同じフレーム数を返します（44,100 / 30,011 /
     65,537 サンプルで実測、差 0）。`interpolate=False` で無声を 0 のまま返し、
-    `uv` を別に受け取ります。
+    `uv` を別に受け取ります。F0 は `NativeGridClip` で `[f0_min, f0_max]` に clip します。
+
+    `algo_factory` は単体テスト用の口です（RMVPE の重みを読まずに clip の段を試すため）。
     """
 
     def __init__(self, *, f0_min: float = 65.0, f0_max: float = 1100.0,
-                 device: str = "cpu"):
+                 device: str = "cpu", algo_factory=None):
         self.f0_min, self.f0_max, self.device = float(f0_min), float(f0_max), device
+        self._algo_factory = algo_factory or _default_algo
 
     def __call__(self, wav: np.ndarray, sr: int, hop: int):
         from preprocess.f0_rmvpe import extract_f0_rmvpe
-        f0, uv = extract_f0_rmvpe(wav, int(sr), int(hop), self.f0_min, self.f0_max,
-                                  device=self.device, interpolate=False)
+        algo = self._algo_factory(sample_rate=int(sr), hop_size=int(hop), fmin=self.f0_min,
+                                  fmax=self.f0_max, device=self.device)
+        f0, uv = extract_f0_rmvpe(wav, int(sr), int(hop), device=self.device,
+                                  interpolate=False, algo=algo)
         return np.asarray(f0, np.float32), np.asarray(uv, np.float32)
 
     def manifest(self) -> dict[str, Any]:

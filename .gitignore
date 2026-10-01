@@ -120,3 +120,7 @@ onnxruntime_profile_*.json
 
 # ── M0 の素材置き場（公開コーパスのダウンロード先。コミットしない）──
 .m0data/
+
+# ── NUS-48E の実験一式（公開しない。PrettyPitch 側と対）───────────────────
+configs/nus12_en_uvfree.yaml
+configs/recipes/nus_*.yaml

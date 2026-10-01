@@ -92,17 +92,23 @@ timing・F0・V/UV）。**CER・信号品質・明るさは比べられません
 - **話者類似度の主観評価。** 客観では同等（相対差 0.2%）と分かっており、聴取では判定に
   至りませんでした（判定 4 票すべてが「後に聴いた側」）。
 
-### RTF（実測・20 秒のフレーズ）
+### RTF（実測・SVC の既定の 16 step）
 
-| 段 | CPU | GPU |
+| 段 | CPU（10 秒） | GPU（20 秒） |
 |---|---:|---:|
-| acoustic（flow 16 step） | 0.081 | 0.006 |
-| **ボコーダー（NHVSing / ONNX・CPU 実行）** | 0.355 | **0.432** |
-| 合計 | 0.654 | 0.464 |
+| 特徴抽出（ContentVec + RMVPE） | 0.228 | 0.023 |
+| acoustic（flow 16 step） | **0.446** | 0.013 |
+| **ボコーダー（NHVSing / ONNX・CPU 実行）** | 0.261 | **0.291** |
+| 合計 | 0.935 | 0.328 |
 
-**最大の項はボコーダーで、GPU では全体の 93% です。** acoustic を速くしても end-to-end は
-ほとんど変わりません。**「1-step だから速い」は acoustic の話**であって pipeline 全体では
-ありません（**SVC 経路の既定は 16 step です**。下の表）。
+**GPU では最大の項はボコーダーで、全体の 89% です。** acoustic を速くしても end-to-end は
+ほとんど変わりません。**CPU では 16 step の acoustic がボコーダーを上回ります。**
+**「1-step だから速い」は acoustic の話**であって pipeline 全体ではありません（**SVC 経路の
+既定は 16 step です**。下の表）。計測は 2026-09-29、省メモリ版のボコーダー（4 スレッド）で、
+Ryzen 9 5900X / Windows です（[実行計画](doc/svc-plan.md) 12 節）。
+
+> **訂正（2026-09-29）:** 以前の表は acoustic を「flow 16 step」と書いていましたが、**1 step の
+> 計測でした**。また CPU の列は 10 秒での計測でした。
 
 ## 使い方（SVC）
 
@@ -195,7 +201,7 @@ extra は毎回すべて並べてください。実行は `uv run python ...`、
     uv run python -m unittest test_svc_model test_svc_preprocess test_svc_dataset test_svc_metrics
     uv run ruff check .
 
-単体テストは **514 件**で、重いモデルもネットワークも使いません。`run_smoke.py` の入力は
+単体テストは **527 件**で、重いモデルもネットワークも使いません。`run_smoke.py` の入力は
 合成波形なので、**品質の検証にはならず**、配線が壊れていないことだけを示します。
 
 ## 既定値と注意点（すべて実測）
@@ -281,19 +287,19 @@ CPUで計測したRTF（Real-Time Factor。小さいほど速く、1未満なら
 
 | コア数 | Python native | ONNX |
 |:--:|--:|--:|
-| 1 | 0.027 | 0.090 |
-| 2 | 0.026 | 0.063 |
-| 4 | 0.027 | 0.058 |
-| 8 | 0.026 | 0.054 |
-| 10 | 0.024 | 0.065 |
+| 1 | 0.023 | 0.066 |
+| 2 | 0.021 | 0.047 |
+| 4 | 0.020 | 0.042 |
+| 8 | 0.021 | 0.060 |
+| 10 | 0.021 | 0.062 |
 
-- **Python native** は1ステップなのでコア数にほぼ依存せず、1コアでも RTF 0.027（実時間の約37倍速）です。
-- **ONNX** は onnxruntime のオーバヘッドで native より数倍遅くなりますが、それでも実時間の10倍以上の速さです。コア数は4〜8が最速で、全コア（10）ではかえって遅くなります。
+- **Python native** は1ステップなのでコア数にほぼ依存せず、1コアでも RTF 0.023（実時間の約43倍速）です。
+- **ONNX** は onnxruntime のオーバヘッドで native より数倍遅くなりますが、それでも実時間の15倍以上の速さです。4コアが最速で、8コア以上ではかえって遅くなります。励起の倍音和を逐次加算にしてメモリを入力長から切り離しているため、コア数を増やしてもここが並列化されないためです。
 - **NHVSing ボコーダー** は CPU で RTF 0.1 未満です（詳細は NHVSing のリポジトリを参照）。
 
-（計測条件：Apple Silicon 10コア・onnxruntime CPU・約7秒のフレーズ・中央値。機種によって変わります。）
+（計測条件：Apple Silicon 10コア・onnxruntime CPU・実データの7.0秒フレーズ・9回の中央値。ONNX は `export/cli.py` の既定設定（`--variant diffsinger --hop 512`）で書き出したものです。機種によって変わります。）
 
-**この表は SVS 音響モデル単体の値です。** **SVC 経路の end-to-end は別物**で（上の RTF の節）、実測では **GPU で合計 RTF 0.464、うちボコーダーが 0.432（93%）**、acoustic は 0.006 でした（CPU では合計 0.654）。**acoustic を速くしても end-to-end はほとんど動きません。** また **`realtime_capable` が True でも「リアルタイム」とは書きません** — chunk 境界・audio I/O・連続運転を測っていないためです。
+**この表は SVS 音響モデル単体の値です。** **SVC 経路の end-to-end は別物**で（上の RTF の節）、実測では **GPU で合計 RTF 0.328、うちボコーダーが 0.291（89%）**、acoustic（16 step）は 0.013 でした（CPU では合計 0.935）。**acoustic を速くしても end-to-end はほとんど動きません。** また **`realtime_capable` が True でも「リアルタイム」とは書きません** — chunk 境界・audio I/O・連続運転を測っていないためです。
 
 フレーム設定は44.1kHz・hop size256です。hop size512 には、隣り合う2フレームの平均を取ることで対応します。
 
@@ -405,6 +411,8 @@ V3.1 の上限を基準にしている**ため、測り直しが済むまで消�
 
 既定は **V3.2** です（高音域でフレーム単位に波形が急激に弱まる現象を、LTV フィルタの重ね合わせを Hann 窓化して解消した最新のウェイト。入出力の仕様は V3.1 と同一なので差し替えるだけで使えます。詳細は [NHVSing](https://github.com/wavtechyukky/NHVSing/) を参照）。
 
+4 ファイルとも **2026-09-19 の省メモリ版の書き出し**です（NHVSing 8e804b2。重みは同じ）。旧い書き出しは入力長ぶんの中間テンソルを一度に展開していたため、長いフレーズでメモリが尽きました（手元の Windows で **0.84 GB/音声秒**。20 秒で約 17 GB）。省メモリ版は約 18 MB/秒で、出力は旧い書き出しと一致します（乱数を固定して SNR 142 dB）。励起と時変 FIR を逐次ループで回すので、**スレッドを増やすほど遅くなります**。`infer.load_vocoder` は onnxruntime を **4 スレッド**で動かします（`intra_op_threads=None` で onnxruntime の既定に戻ります）。
+
 ### オプション
 
 - **辞書** — 任意の音素辞書を指定できます。日本語以外にも対応できる設計です（多言語対応そのものは今後の課題です）。
@@ -414,7 +422,13 @@ V3.1 の上限を基準にしている**ため、測り直しが済むまで消�
 
 ## ライセンス
 
-コードは MIT です（`LICENSE`）。ただし、同梱のボコーダー ONNX（`checkpoints/nhv_v3_2*.onnx`）、および Release で配布する学習済みモデルとその学習に使った歌声データベースは MIT の対象外で、それぞれのライセンス・規約に従います（下の謝辞、およびモデル配布物の `CREDITS.txt` を参照）。
+コードは MIT です（`LICENSE`）。ただし次のものは MIT の対象外で、それぞれのライセンス・規約に従います。対応表と詳細は [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) にまとめてあります。
+
+- **`preprocess/algorithms/base.py` と `preprocess/algorithms/rmvpe.py`** — どちらも [pitch-benchmark](https://github.com/lars76/pitch-benchmark)（MIT, Copyright (c) 2025 Lars Nieradzik）からそのまま取り込んだファイルです。著作権表示は `LICENSES/pitch-benchmark-MIT.txt` にあり、再配布時はこれを保持してください。`base.py` は本リポジトリと同じ MIT です。
+  `rmvpe.py` は違います。中の RMVPE モデルは [上流](https://github.com/Dream-High/RMVPE)が **Apache-2.0** なので、このファイルだけ Apache-2.0 で配布します（全文 `LICENSES/Apache-2.0.txt`）。`to_local_average_cents()` は [CREPE](https://github.com/marl/crepe) 由来で、その MIT 表示は `LICENSES/crepe-MIT.txt` にあります。ウェイト `rmvpe.pt` は初回実行時にダウンロードするもので、本リポジトリには含みません。
+- **デモ・サンプル音声**（`demo/audio/*_gt.ogg`、`notebooks/sample_data/*.wav`） — 合成音ではなく歌声データベースの実録音の抜粋です。各データベースの規約に従います。
+- **同梱のボコーダー ONNX**（`checkpoints/nhv_v3_2*.onnx` と `checkpoints/nhv_v3_1*.onnx`） — [NHVSing](https://github.com/wavtechyukky/NHVSing/) の成果物です。
+- **Release で配布する学習済みモデル**とその学習に使った歌声データベース — モデル配布物の `CREDITS.txt` を参照してください。
 
 **SVC 経路の制約はさらに強くなります。** base モデルの学習に **GTSinger（CC BY-NC-SA 4.0、非商用かつ継承）** を使っており、ShareAlike が学習済み重みに及ぶかはライセンス条文からは決まりません。**そのため SVC の重みは配布していません**（研究・個人利用のみという決定。`doc/svc-dataset-ledger.md`）。**ライセンスの整理が済めば公開を検討します**が、**現時点では可否も時期も約束できません** —— GTSinger の ShareAlike の扱い、夏目悠李の規約（成果物由来の音声を機械学習データに使うことを禁じている）、御丹宮くるみの重み配布の記載なし、の 3 点を解く必要があります。また GTSinger は「本人の同意なく特定個人の歌声を生成すること」を禁じており、**声を変換するには target 歌手の同意が要ります**。ソフトウェアのライセンスとは別の話です。詳細は `LICENSE` の SVC 向け NOTICE を参照してください。
 
@@ -427,6 +441,10 @@ V3.1 の上限を基準にしている**ため、測り直しが済むまで消�
 - 波音リツ — https://www.canon-voice.com/voicebanks/
 - Neural Homomorphic Vocoder — https://www.isca-archive.org/interspeech_2020/liu20_interspeech.html
 - dsp（zjlww） — https://github.com/zjlww/dsp
+- pitch-benchmark（Lars Nieradzik。`preprocess/algorithms/` の 2 ファイルはここからの取り込みです） — https://github.com/lars76/pitch-benchmark
+- RMVPE（F0 抽出モデル本体） — https://github.com/Dream-High/RMVPE
+- CREPE（RMVPE 経由で `to_local_average_cents()` を利用） — https://github.com/marl/crepe
+- DiffGAN-TTS（JCU 判別器の設計を参考にしました。コードは自前実装です） — https://github.com/keonlee9420/DiffGAN-TTS
 
 SVC 経路では次も使わせていただいています。
 

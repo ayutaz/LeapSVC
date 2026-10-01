@@ -233,12 +233,19 @@ class _OnnxVocoder:
     __slots__ = ("session", "sr")
 
 
-def load_vocoder(onnx_path: str, sr: int = 44100):
+def load_vocoder(onnx_path: str, sr: int = 44100, *, intra_op_threads: int | None = 4):
     """Load the bundled NHVSing vocoder ONNX (mel -> waveform) via onnxruntime. Self-contained: no
-    external NHVSing checkout. ONNX I/O: mel[B,T,128], f0[B,1,T] (Hz), uv[B,1,T] (1 = unvoiced)
-    -> waveform[B,1,256*T] (44.1 kHz, hop 256). `onnx_path` = the bundled checkpoints/nhv_v3_2.onnx."""
+    external NHVSing checkout. ONNX I/O: mel[1,T,128], f0[1,1,T] (Hz), uv[1,1,T] (1 = unvoiced)
+    -> waveform[1,1,256*T] (44.1 kHz, hop 256). `onnx_path` = the bundled checkpoints/nhv_v3_2.onnx.
+
+    `intra_op_threads` defaults to 4: the memory-bounded export runs its excitation and FIR as
+    sequential ONNX Scan loops, so more threads make it slower (measured: RTF 0.233 at 4 threads vs
+    0.403 at onnxruntime's default of 12 on a 12-core Ryzen). None leaves it to onnxruntime."""
     import onnxruntime as ort
-    sess = ort.InferenceSession(os.path.abspath(os.path.expanduser(onnx_path)),
+    so = ort.SessionOptions()
+    if intra_op_threads is not None:
+        so.intra_op_num_threads = int(intra_op_threads)
+    sess = ort.InferenceSession(os.path.abspath(os.path.expanduser(onnx_path)), so,
                                 providers=["CPUExecutionProvider"])
     v = _OnnxVocoder()
     v.session, v.sr = sess, int(sr)

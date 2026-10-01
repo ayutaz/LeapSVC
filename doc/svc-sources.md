@@ -63,6 +63,7 @@
 | `out/m5/ckpt_sweep_*/`、`out/m5/where_*/` | **checkpoint と段階の切り分け**。明瞭度は fine-tune の step でも base の学習量でも動かない |
 | `out/m5/probe_trainsongs/` | **学習曲での自己再構成**（診断用。**品質の主張には使わない**）。上限比 **+1.0 点** |
 | [`tools/ja_material_audit.py`](../tools/ja_material_audit.py) / `out/ja_audit/` | **日本語素材の曲単位の棚卸し**（2026-09-16）。**GTSinger 日本語 2 名は未使用曲ゼロ**（`--max-hours` が各曲から間引くため全曲が汚染）、**使えるのは `natsume` 22 曲 + `oniku` 28 曲だけ**。`JA_Tenor_1` は**学習素材 78 本が手元に無い** |
+| `out/m5/_vocoder_mem/` | **省メモリ版ボコーダーの取り込み**（2026-09-29、[実行計画](svc-plan.md#12-上流の省メモリ書き出しの取り込み2026-09-29) 12 節）。旧版と新版の一致（`equivalence.jsonl`）、ピークメモリとスレッド別 RTF（`sweep_memory_rtf.jsonl`）、end-to-end RTF（`rtf_*.json`）、SVC F0 の bit 一致（`f0_{old,new,up}.npz`）、`nhv_v3_2_1` の再合成比較（`indist/`）。計測スクリプトは `scripts/` |
 | [`doc/svc-content-encoder.md`](svc-content-encoder.md) / [`doc/svc-dataset-ledger.md`](svc-dataset-ledger.md) | encoder 選定と M0 台帳 |
 | [`pyproject.toml`](../pyproject.toml) / [`uv.lock`](../uv.lock) / `.python-version` | Python 3.13 固定、CUDA wheel index、依存の解決結果 |
 | [`CLAUDE.md`](../CLAUDE.md) | コマンド、共有スタック、データ契約、既知の落とし穴 |

@@ -222,6 +222,77 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class BundledVocoderTests(unittest.TestCase):
+    """同梱ボコーダーは**省メモリ版の書き出し**であること（NHVSing 8e804b2、2026-09-19）。
+
+    旧い書き出しは入力長ぶんの中間テンソル（`[B, 200, 256T]` の cos、フレーム方向に全長の
+    FFT）を一度に展開していました。手元の Windows / ORT 1.29 で実測すると **0.84 GB/音声秒**で、
+    `svc_convert.py` の既定 chunk（20 秒）では 1 回の呼び出しが約 17 GB になります。
+    省メモリ版は励起と時変 FIR を ONNX の `Scan` で回し、約 18 MB/秒です（重みは同一、
+    出力は SNR 142 dB で一致）。**旧い版に戻すとこのテストが落ちます。**
+    """
+
+    ROOT = Path(__file__).resolve().parent
+    NAMES = ("nhv_v3_1.onnx", "nhv_v3_1x.onnx", "nhv_v3_2.onnx", "nhv_v3_2x.onnx")
+
+    def test_every_bundled_vocoder_is_the_scan_export(self):
+        import onnx
+        for name in self.NAMES:
+            with self.subTest(name=name):
+                g = onnx.load(str(self.ROOT / "checkpoints" / name)).graph
+                self.assertGreater(sum(n.op_type == "Scan" for n in g.node), 0,
+                                   f"{name} は入力長ぶんを一度に展開する旧い書き出しです")
+
+
+class VocoderThreadsTests(unittest.TestCase):
+    """ボコーダーの ORT intra-op スレッドは**既定 4**。
+
+    省メモリ版は `Scan` の逐次ループを含むので、スレッドを増やすほど遅くなります。
+    手元（Ryzen 9 5900X、12 コア）の実測で、V3.1 の RTF は 10 秒入力で 1 / 2 / 4 / 8 /
+    ORT 既定（12）/ 24 スレッドが 0.243 / 0.226 / 0.233 / 0.308 / 0.403 / 0.487、20 秒入力で
+    2 / 4 / 既定が 0.284 / 0.297 / 0.420 でした。上流 NHVSing も M4 で 4 が最速です。
+    """
+
+    VOC = str(Path(__file__).resolve().parent / "checkpoints" / "nhv_v3_1.onnx")
+
+    def test_defaults_to_four_threads(self):
+        from infer import load_vocoder
+        v = load_vocoder(self.VOC)
+        self.assertEqual(v.session.get_session_options().intra_op_num_threads, 4)
+
+    def test_none_leaves_the_choice_to_onnxruntime(self):
+        from infer import load_vocoder
+        v = load_vocoder(self.VOC, intra_op_threads=None)
+        self.assertEqual(v.session.get_session_options().intra_op_num_threads, 0)
+
+
+class SvcUnsupportedOptionsTests(unittest.TestCase):
+    """SVC の経路が**黙って無視する設定**は、学習を始める前に止める。
+
+    `data.eval_dbs`（上流 9ceca86）は `LeapSingerDataset` にしか渡りません。SVC で
+    書いても split は変わらず、**hold-out を絞ったつもりの実験が別物になります**。
+    online `pitch_aug` も同じ理由で止めています（特徴量が事前計算済みのため）。
+    """
+
+    def test_svc_rejects_eval_dbs(self):
+        from train import _reject_unsupported_svc_options
+        with self.assertRaises(SystemExit):
+            _reject_unsupported_svc_options(True, {}, {"eval_dbs": ["ritsu"]})
+
+    def test_svc_rejects_online_pitch_aug(self):
+        from train import _reject_unsupported_svc_options
+        with self.assertRaises(SystemExit):
+            _reject_unsupported_svc_options(True, {"pitch_aug": True}, {})
+
+    def test_svs_keeps_both_options(self):
+        from train import _reject_unsupported_svc_options
+        _reject_unsupported_svc_options(False, {"pitch_aug": True}, {"eval_dbs": ["ritsu"]})
+
+    def test_svc_without_those_options_passes(self):
+        from train import _reject_unsupported_svc_options
+        _reject_unsupported_svc_options(True, {"pitch_aug": False}, {"eval_songs": 2})
+
+
 class LoaderKwargsTests(unittest.TestCase):
     """DataLoader の追加引数。**pin_memory は CUDA のときだけ**。
 

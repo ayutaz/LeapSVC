@@ -65,7 +65,7 @@ target singer の train 曲、同一 take、近重複 clip は test から除外
 | spectral | mel/STFT distance、MCD | parallel reference がある subset に限定 |
 | **音の明るさ** | **spectral centroid、帯域エネルギー比**（[`tools/audio_metrics.py`](../tools/audio_metrics.py)） | **source ではなく「GT mel をボコーダーに通した再合成」を上限の基準にする。** 内容・音高・V/UV の指標は高域の欠落を検知しない（M3 で実測） |
 | timing | onset のずれと**対応が付いた割合**（[`tools/timing_metrics.py`](../tools/timing_metrics.py)） | **ずれの分解能は hop（5.8 ms）。** 実測でずれは限界以下だったので `matched_ratio` を読む |
-| compute | 段別 RTF、peak VRAM（[`tools/rtf.py`](../tools/rtf.py)） | **段ごとに分解する。** 実測で最大の項はボコーダー（合計 0.654 中 0.355）、acoustic は 0.081 |
+| compute | 段別 RTF、peak VRAM（[`tools/rtf.py`](../tools/rtf.py)） | **段ごとに分解する。** 実測で最大の項はボコーダー（合計 0.654 中 0.355）、acoustic は 0.081（1 step・旧い書き出し）。**2026-09-29 の 16 step では CPU で acoustic 0.446 がボコーダー 0.261 を上回る** |
 | streaming | algorithmic latency、end-to-end latency、boundary error | 実機 audio I/O で測る |
 
 一つの総合点へ早期に集約せず、pitch・内容・target similarity・artifact・latency を別軸で報告します。
@@ -168,6 +168,8 @@ M4 の ft10000・6 clip で**ずれの中央値がちょうど 5.8 ms = 1 フレ
 pipeline 全体ではありません（[主張ルール](svc-prior-art-license.md) 6 節）。`realtime_capable`
 は `rtf_total < 1` を見ているだけで、chunk 境界も audio I/O も連続運転も見ていません。
 **この旗だけで「リアルタイム」と書かないこと。**
+
+> **2026-09-29 追記:** この表は **1 step・旧い書き出し**のボコーダーの値です。省メモリ版で16 step にすると CPU 10 秒で content 0.132 / f0 0.096 / **flow 0.446** / vocoder 0.261 / 合計 0.935 で、**acoustic がボコーダーを上回ります**（[実行計画](svc-plan.md#12-上流の省メモリ書き出しの取り込み2026-09-29)）。
 
 **README の RTF と混同しないこと。** [README](../README.md) の性能表は **SVS 経路を Apple
 Silicon 10 コアで**測ったもの（音響モデル 0.027 / ボコーダー < 0.1）で、上の表は **SVC 経路を

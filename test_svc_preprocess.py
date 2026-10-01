@@ -747,6 +747,90 @@ class RmvpeManifestTests(unittest.TestCase):
         self.assertEqual(RmvpeF0().manifest()["f0_extractor_weight_sha256"], h)
 
 
+def _native_fake(native_hz):
+    """RMVPE のネイティブ格子（10 ms）で決めた F0 を返すだけの fake。RMVPE の中身は試さない。"""
+    from preprocess.algorithms.base import ContinuousPitchAlgorithm
+
+    class _FixedNative(ContinuousPitchAlgorithm):
+        def _extract_raw_pitch_and_periodicity(self, audio):
+            n = len(native_hz)
+            return np.arange(n) * 0.01, np.array(native_hz, dtype=np.float64), np.ones(n)
+
+    return _FixedNative
+
+
+class RmvpeF0ClipTests(unittest.TestCase):
+    """SVC の F0 は **RMVPE のネイティブ格子で** [f0_min, f0_max] に clip する。
+
+    上流は 9ceca86 で SVS の clip を外しました（境界に張り付いて平坦な音を作るため）。
+    SVC は既存の shard と checkpoint がこの clip 込みの F0 で作られているので、
+    **bit 一致を保つために残します。** 旧実装の clip は `_sanity_check`、つまり
+    mel 格子への補間の**前**に掛かっていたので、抽出結果を後から clip しても一致しません。
+    """
+
+    SR, HOP = 1000, 5          # mel 格子 5 ms。ネイティブ 10 ms の中点を 1 つおきに踏む
+
+    def _run(self, native_hz):
+        from preprocess.svc.encoders import NativeGridClip, RmvpeF0
+
+        class _Clipped(NativeGridClip, _native_fake(native_hz)):
+            pass
+
+        f0x = RmvpeF0(algo_factory=lambda **kw: _Clipped(
+            sample_rate=kw["sample_rate"], hop_size=kw["hop_size"],
+            fmin=kw["fmin"], fmax=kw["fmax"]))
+        wav = (0.5 * np.sin(np.arange(100) * 0.3)).astype(np.float32)
+        return f0x(wav, self.SR, self.HOP)
+
+    def test_clips_on_the_native_grid_before_interpolation(self):
+        # 補間の前に clip するなら中点は (65 + 70) / 2。後から clip すると 65 に張り付き、
+        # clip しなければ 60 -> 65 が 100 cent を超えて先頭が despike で落ちる。
+        for native, want in (([60.0] + [70.0] * 9, [65.0, 67.5, 70.0]),
+                             ([1200.0] + [1000.0] * 9, [1100.0, 1050.0, 1000.0])):
+            with self.subTest(native=native[0]):
+                f0, uv = self._run(native)
+                np.testing.assert_allclose(f0[:3], want, rtol=1e-6)
+                np.testing.assert_array_equal(uv[:3], [1.0, 1.0, 1.0])
+
+    def test_the_default_extractor_is_rmvpe_with_the_native_grid_clip(self):
+        from preprocess.algorithms.rmvpe import RMVPEPitchAlgorithm
+        from preprocess.svc.encoders import NativeGridClip, clipped_rmvpe_class
+        cls = clipped_rmvpe_class()
+        self.assertTrue(issubclass(cls, NativeGridClip))
+        self.assertTrue(issubclass(cls, RMVPEPitchAlgorithm))
+        # mixin が先に来ないと RMVPE 側の _sanity_check が勝ち、clip が掛からない
+        self.assertLess(cls.__mro__.index(NativeGridClip), cls.__mro__.index(RMVPEPitchAlgorithm))
+
+
+class ExtractF0CallerTests(unittest.TestCase):
+    """`extract_f0_rmvpe` から fmin / fmax が消えた（上流 9ceca86）。
+
+    旧い呼び出し `extract_f0_rmvpe(wav, sr, hop, 65.0, 1100.0, device=...)` は
+    **TypeError で落ちますが、単体テストはこの呼び出しを通りません**（実モデルが要るため）。
+    merge 直後に SVC の前処理・変換・測定ツールが全部これで壊れていました。
+    位置引数が 3 個を超える呼び出しを、リポジトリ全体で拒否します。
+    """
+
+    SKIP_DIRS = {".venv", ".git", ".m0data", "out", "log", "data", "download", "__pycache__",
+                 "checkpoints"}
+
+    def test_no_caller_passes_fmin_fmax_positionally(self):
+        import ast
+        root = Path(__file__).resolve().parent
+        bad = []
+        for path in root.rglob("*.py"):
+            if self.SKIP_DIRS & set(path.relative_to(root).parts):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Call)
+                        and getattr(node.func, "id", getattr(node.func, "attr", None))
+                        == "extract_f0_rmvpe"
+                        and len(node.args) > 3):
+                    bad.append(f"{path.relative_to(root)}:{node.lineno}")
+        self.assertEqual(bad, [], "extract_f0_rmvpe に fmin / fmax を位置引数で渡しています")
+
+
 class SongNameTests(unittest.TestCase):
     """WAV のパス -> phrase 名の `{song}` 部分（M1 ゴール 3）。
 
